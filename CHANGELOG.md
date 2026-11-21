@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.0-r27
+
+- Added China Unicom WeChat Mini Program `openid` login.
+- Added RSA token exchange, mini-program headers, micro-hall session bootstrap, and account broadcast parsing.
+- Added mini-program account refresh without storing phone passwords, SMS codes, or login cookies.
+
 ## 1.0.0-r26
 
 - Added China Unicom `myPackage` package and contract profile retrieval.

@@ -1,5 +1,16 @@
 # Third-party notices
 
+## Testplayers / unicom-mini-ha
+
+China Unicom WeChat Mini Program endpoint behavior, RSA token exchange sequence,
+request headers, and micro-hall session flow were cross-checked against:
+
+<https://github.com/Testplayers/unicom-mini-ha>
+
+The referenced repository does not declare a license. This repository contains
+an independent standard-library implementation for the LuCI plugin and does not
+include source files from that project.
+
 ## weda0511 / ha_unicom_bill
 
 China Unicom `myPackage` endpoint behavior and field names were cross-checked
