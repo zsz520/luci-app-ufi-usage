@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.0-r29
+
+- Removed the visible third-party attribution line from the LuCI footer.
+- Removed China Unicom service-password login from the interface and backend.
+
 ## 1.0.0-r28
 
 - Added no-capture China Unicom Mini Program SMS-code login.
@@ -39,5 +44,5 @@
 - Renamed the plugin from the bill-oriented package to `luci-app-ufi-usage`.
 - Migrated legacy account state and data paths while keeping carrier API field names.
 - Added full-width usage cards, icon-only account actions, and improved responsive layout.
-- Added China Unicom SMS, token, QR, and password login flows.
+- Added China Unicom SMS, token, and QR login flows.
 - Added China Mobile, Cloud Card, and Xiaojing Card usage providers.

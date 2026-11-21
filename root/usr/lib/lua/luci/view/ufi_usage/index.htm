@@ -625,17 +625,6 @@
 	gap: 7px;
 }
 #ufi-usage-app .ub-code-line .ub-btn { white-space: nowrap; }
-#ufi-usage-app .ub-more {
-	margin-top: 12px;
-	border-top: 1px solid var(--ub-border);
-	padding-top: 10px;
-}
-#ufi-usage-app .ub-more summary {
-	cursor: pointer;
-	color: var(--ub-muted);
-	font-size: 11px;
-}
-#ufi-usage-app .ub-more[open] summary { margin-bottom: 8px; }
 #ufi-usage-app .ub-code {
 	text-align: center !important;
 	font-size: 20px !important;
@@ -662,13 +651,10 @@
 #ufi-usage-app .ub-foot {
 	margin: 14px 2px 4px;
 	display: flex;
-	flex-wrap: wrap;
-	justify-content: space-between;
-	gap: 8px;
+	justify-content: flex-end;
 	color: var(--ub-muted);
 	font-size: 10px;
 }
-#ufi-usage-app .ub-foot a { color: var(--ub-accent-strong); }
 #ufi-usage-app .ub-auto-grid {
 	display: grid;
 	grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -854,14 +840,6 @@
 							<button class="ub-btn primary" id="ub-unicom-mini-login" type="button">使用小程序 OpenID 登录</button>
 						</div>
 					</div>
-					<details class="ub-more" id="ub-unicom-more">
-						<summary>更多登录方式</summary>
-						<div class="ub-field">
-							<label>联通服务密码（仅在联通允许时可用）</label>
-							<input id="ub-password" type="password" autocomplete="off" maxlength="32">
-						</div>
-						<button class="ub-btn" id="ub-unicom-password" type="button">服务密码登录</button>
-					</details>
 				</div>
 				<div class="ub-field">
 					<label>备注（可选）</label>
@@ -1160,7 +1138,7 @@
 		if (!account) {
 			return '<section class="ub-card ub-cta"><h3>开始配置余量</h3>' +
 				'<p>支持中国移动短信登录、中国联通短信验证码/Token/扫码/小程序验证码与 OpenID、云上卡和小鲸卡充值号查询。' +
-				'不保存手机号密码或联通服务密码；保存的会话使用本机密钥加密。</p>' +
+				'不保存账号密码；保存的会话使用本机密钥加密。</p>' +
 				'<button class="ub-btn primary" data-add>添加第一个账号</button></section>';
 		}
 		if (!usage) {
@@ -1271,7 +1249,7 @@
 			'<div class="ub-account-list">' + renderAccountList() + '</div>' +
 			'<button class="ub-btn ub-side-add" data-add>＋ 添加账号</button></aside>' +
 			'<main class="ub-main">' + renderUsage() + '</main></div>' +
-			'<div class="ub-foot"><span>协议与余量语义参考 <a href="https://github.com/Asunano/UFI-AXIS" target="_blank" rel="noopener noreferrer">UFI-AXIS</a> / <a href="https://github.com/AliYa-chen/unicomvue" target="_blank" rel="noopener noreferrer">unicomvue</a>（MIT）</span><span>插件 v' + esc(state.version) + '</span></div>';
+			'<div class="ub-foot"><span>插件 v' + esc(state.version) + '</span></div>';
 	}
 	function showAdd(provider) {
 		addMask.classList.remove('hidden');
@@ -1711,21 +1689,6 @@
 		window.setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
 		toast('Token 文件已下载');
 	}
-	async function unicomPasswordLogin() {
-		var identity = document.getElementById('ub-unicom-phone').value.trim();
-		var label = document.getElementById('ub-label').value.trim();
-		var password = document.getElementById('ub-password').value;
-		try {
-			var result = await api('unicom_password_login', {
-				phone: identity,
-				password: password,
-				label: label
-			});
-			toast(result.message || '登录成功');
-			hideAdd();
-			await load(result.account.id);
-		} catch (error) { toast(error.message, true); }
-	}
 	async function verifyMobile() {
 		try {
 			var code = document.getElementById('ub-code').value;
@@ -1917,7 +1880,6 @@
 	document.getElementById('ub-unicom-mini-verify').addEventListener('click', verifyMiniSms);
 	document.getElementById('ub-unicom-token-login').addEventListener('click', unicomTokenLogin);
 	document.getElementById('ub-unicom-mini-login').addEventListener('click', unicomMiniLogin);
-	document.getElementById('ub-unicom-password').addEventListener('click', unicomPasswordLogin);
 	document.getElementById('ub-unicom-qr-start').addEventListener('click', startQr);
 	['ub-unicom-phone', 'ub-unicom-code', 'ub-unicom-token-phone', 'ub-unicom-token', 'ub-unicom-qr-phone', 'ub-unicom-mini-phone', 'ub-unicom-mini-code', 'ub-unicom-mini-openid'].forEach(function (id) {
 		document.getElementById(id).addEventListener('input', updateUnicomControls);

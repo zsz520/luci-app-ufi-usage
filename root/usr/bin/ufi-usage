@@ -4,8 +4,7 @@
 The carrier protocols and usage field mappings are adapted from UFI-AXIS
 (Copyright 2026 Asunano, MIT). This implementation is intentionally read-only
 with respect to carrier accounts. Automatic login is limited to China Mobile;
-China Unicom accounts use SMS verification, ordinary password login when the
-carrier permits it, or QR login.
+China Unicom accounts use SMS verification or QR login.
 """
 
 from __future__ import annotations
@@ -36,7 +35,7 @@ from typing import Any
 
 
 APP_NAME = "luci-app-ufi-usage"
-APP_VERSION = "1.0.0-r28"
+APP_VERSION = "1.0.0-r29"
 LEGACY_DATA_DIR = Path("/etc/ufi-bill")
 DATA_DIR = Path(os.environ.get("UFI_USAGE_DATA_DIR", "/etc/ufi-usage"))
 STATE_FILE = DATA_DIR / "state.json"
@@ -92,7 +91,6 @@ UNICOM_SMS_SEND_PATH = "/mobileService/sendRadomNum.htm"
 UNICOM_SMS_LOGIN_PATH = "/mobileService/radomLogin.htm"
 UNICOM_WEB_KEY_URL = UNICOM_BASE + "/login-web/v1/safeInfo/getKey"
 UNICOM_WEB_SMS_URL = UNICOM_BASE + "/login-web/v1/sms/createSms"
-UNICOM_LOGIN_URL = UNICOM_BASE + "/mobileService/login.htm"
 UNICOM_ONLINE_URL = UNICOM_BASE + "/mobileService/onLine.htm"
 UNICOM_PACKAGE_URL = (
     UNICOM_BASE
@@ -128,7 +126,6 @@ UNICOM_UA = (
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 )
 UNICOM_UA_APP = "unicom{version:android@11.0900}"
-UNICOM_VERSION = "android@11.0900"
 UNICOM_SMS_APP_ID = "ChinaunicomMobileBusiness"
 UNICOM_SMS_APP_VERSION = "android@13.0000"
 UNICOM_VERIFICATION_ORIGIN = "https://img.client.10010.com"
@@ -2389,8 +2386,6 @@ def refresh_account_into_state(identifier: str, force_login: bool = False) -> di
         if session.get("mode") == "sms":
             usage = unicom_fetch_sms_usage(opener, jar, identity)
         else:
-            if session.get("mode") == "password" and not list(jar):
-                unicom_renew(opener, session)
             package_payload, balance_payload, jar = fetch_unicom(opener, jar)
             usage = parse_unicom_usage(package_payload, balance_payload, identity)
         session["cookies"] = save_cookies(jar)
@@ -2498,87 +2493,6 @@ def mobile_verify_code(identifier: str, code: str) -> dict:
         "usage": usage,
         "account": public_account(latest["accounts"][identifier]),
         "message": "移动账号登录成功",
-    }
-
-
-def unicom_renew(opener: urllib.request.OpenerDirector, session: dict) -> None:
-    token_online = clean_text(session.get("token_online"), 4096)
-    app_id = clean_text(session.get("app_id"), 300)
-    if not token_online or not app_id:
-        raise AuthRequired("联通会话已失效，请重新登录")
-    payload = unicom_json_call(
-        opener,
-        UNICOM_ONLINE_URL,
-        {
-            "token_online": token_online,
-            "appId": app_id,
-            "version": UNICOM_VERSION,
-            "deviceModel": "Android",
-        },
-    )
-    code = clean_text(payload.get("code"), 20)
-    if code and code not in {"0", "0000"}:
-        raise AuthRequired("联通会话续期失败，请重新登录")
-    new_token = clean_text(payload.get("token_online"), 4096)
-    if new_token:
-        session["token_online"] = new_token
-
-
-def unicom_password_login(phone: str, password: str, label: str) -> dict:
-    normalized = digits(phone)
-    if not re.fullmatch(r"1[3-9]\d{9}", normalized):
-        raise UserError("请输入正确的 11 位联通手机号")
-    password = clean_text(password, 32)
-    if not password:
-        raise UserError("请输入联通服务密码")
-    state = load_state()
-    app_id = unicom_login_identity(state)["app_id"]
-    form = {
-        "version": UNICOM_VERSION,
-        "mobile": unicom_rsa(normalized),
-        "reqtime": dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "deviceModel": "Android",
-        "netWay": "Wifi",
-        "isR4": "0",
-        "password": unicom_rsa(password),
-        "appId": app_id,
-    }
-    jar = http.cookiejar.CookieJar()
-    opener = opener_with(jar)
-    payload = unicom_json_call(opener, UNICOM_LOGIN_URL, form)
-    code = clean_text(payload.get("code"), 20)
-    if code not in {"0", "0000"}:
-        description = clean_text(payload.get("dsc") or payload.get("desc"), 100)
-        if code == "2" and "短信" in description:
-            raise UserError("联通要求改用短信或扫码登录，请使用扫码入口")
-        raise UserError(
-            "联通登录失败：服务密码错误或账号需要短信验证"
-            if code in {"2", "3102", "4102", "4103"}
-            else f"联通登录失败（code={code}：{description or '未返回原因'}）"
-        )
-    token_online = clean_text(payload.get("token_online"), 4096)
-    if not token_online:
-        raise UserError("联通登录成功但没有返回会话票据")
-    session = {
-        "mode": "password",
-        "token_online": token_online,
-        "app_id": app_id,
-        "cookies": [],
-    }
-    unicom_renew(opener, session)
-    session["cookies"] = save_cookies(jar)
-    identifier, account = create_or_update_account(
-        state, "unicom", normalized, label
-    )
-    store_session(account, session)
-    state["accounts"][identifier] = account
-    save_state(state)
-    usage = refresh_account_into_state(identifier)
-    latest = load_state()
-    return {
-        "usage": usage,
-        "account": public_account(latest["accounts"][identifier]),
-        "message": "联通账号登录成功",
     }
 
 
@@ -3875,13 +3789,6 @@ def api_dispatch(request: dict) -> dict:
     if action == "mobile_verify_code":
         result = mobile_verify_code(
             clean_text(request.get("account_id"), 40), request.get("code")
-        )
-        return {"ok": True, **result}
-    if action == "unicom_password_login":
-        result = unicom_password_login(
-            request.get("phone"),
-            request.get("password"),
-            request.get("label"),
         )
         return {"ok": True, **result}
     if action == "unicom_token_login":
