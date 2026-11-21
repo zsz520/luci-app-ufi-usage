@@ -4,14 +4,14 @@ set -eu
 OUT=/work/outputs
 ROOT=/work/build/root
 POST=/work/build/post-install
-PACKAGE="$OUT/luci-app-ufi-usage-1.0.0-r29.apk"
+PACKAGE="$OUT/luci-app-ufi-usage-1.0.0-r30.apk"
 
 rm -f "$PACKAGE"
 apk mkpkg \
 	--compat 3.0 \
 	--compression none \
 	--info "name:luci-app-ufi-usage" \
-	--info "version:1.0.0-r29" \
+	--info "version:1.0.0-r30" \
 	--info "description:余量面板 - LuCI carrier usage panel for China Mobile, China Unicom, Cloud Card and Xiaojing Card" \
 	--info "arch:noarch" \
 	--info "license:MIT" \

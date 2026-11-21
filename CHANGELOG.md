@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.0-r30
+
+- Removed the automatic-refresh indicator, 60-second timer, and visibility-based refresh behavior.
+- Manual usage refresh remains available from each account.
+
 ## 1.0.0-r29
 
 - Removed the visible third-party attribution line from the LuCI footer.

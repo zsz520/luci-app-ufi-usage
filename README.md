@@ -82,7 +82,7 @@ LuCI -> 服务 -> 余量面板
 默认输出：
 
 ```text
-outputs/luci-app-ufi-usage-1.0.0-r29.apk
+outputs/luci-app-ufi-usage-1.0.0-r30.apk
 ```
 
 后端自测：

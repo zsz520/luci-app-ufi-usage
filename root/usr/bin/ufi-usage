@@ -35,7 +35,7 @@ from typing import Any
 
 
 APP_NAME = "luci-app-ufi-usage"
-APP_VERSION = "1.0.0-r29"
+APP_VERSION = "1.0.0-r30"
 LEGACY_DATA_DIR = Path("/etc/ufi-bill")
 DATA_DIR = Path(os.environ.get("UFI_USAGE_DATA_DIR", "/etc/ufi-usage"))
 STATE_FILE = DATA_DIR / "state.json"

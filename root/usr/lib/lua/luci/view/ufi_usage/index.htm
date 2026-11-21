@@ -67,26 +67,6 @@
 	gap: 8px;
 	margin-left: auto;
 }
-#ufi-usage-app .ub-auto-pill {
-	display: inline-flex;
-	align-items: center;
-	gap: 6px;
-	padding: 7px 10px;
-	border: 1px solid var(--ub-border);
-	border-radius: 999px;
-	background: var(--ub-card-strong);
-	color: var(--ub-muted);
-	font-size: 10.5px;
-	white-space: nowrap;
-}
-#ufi-usage-app .ub-auto-pill::before {
-	content: '';
-	width: 6px;
-	height: 6px;
-	border-radius: 50%;
-	background: var(--ub-accent);
-	box-shadow: 0 0 0 3px var(--ub-accent-soft);
-}
 #ufi-usage-app .ub-btn {
 	display: inline-flex;
 	align-items: center;
@@ -728,10 +708,9 @@
 		<div class="ub-title-block">
 			<div class="ub-eyebrow">Usage overview</div>
 			<h2>套餐余量</h2>
-			<div class="ub-sub">移动、联通、云上卡与小鲸卡 · 本机加密存储 · 每 60 秒自动刷新</div>
+			<div class="ub-sub">移动、联通、云上卡与小鲸卡 · 本机加密存储</div>
 		</div>
 		<div class="ub-head-actions">
-			<span class="ub-auto-pill">自动刷新 60 秒</span>
 			<button class="ub-btn primary" id="ub-add-top">＋ 添加账号</button>
 		</div>
 	</div>
@@ -911,7 +890,6 @@
 	var miniSmsCountdownRemaining = 0;
 	var unicomLoginMode = 'sms';
 	var miniLoginMode = 'sms';
-	var autoRefreshTimer = null;
 	var refreshingAccountId = '';
 	var toastTimer = null;
 	var root = document.getElementById('ub-root');
@@ -1038,29 +1016,9 @@
 			render();
 			loading.classList.add('hidden');
 			root.classList.remove('hidden');
-			scheduleAutoRefresh();
 		} catch (error) {
 			loading.textContent = error.message;
 		}
-	}
-	function stopAutoRefresh() {
-		if (autoRefreshTimer) clearTimeout(autoRefreshTimer);
-		autoRefreshTimer = null;
-	}
-	function scheduleAutoRefresh() {
-		stopAutoRefresh();
-		if (!state || !state.active_account) return;
-		autoRefreshTimer = setTimeout(async function () {
-			if (
-				document.visibilityState === 'visible'
-				&& !busy
-				&& addMask.classList.contains('hidden')
-			) {
-				await refresh(state.active_account, {auto: true, silent: true});
-			} else {
-				scheduleAutoRefresh();
-			}
-		}, 60000);
 	}
 	function flowRow(label, used, total, remain, unlimited, regional) {
 		var pct = unlimited ? 100 : Math.max(0, Math.min(100, Number(total) > 0 ? Number(used) / Number(total) * 100 : 0));
@@ -1739,14 +1697,11 @@
 			}
 		}, 2200);
 	}
-	async function refresh(accountId, options) {
-		options = options || {};
+	async function refresh(accountId) {
 		if (refreshingAccountId || busy) {
-			if (options.auto) scheduleAutoRefresh();
-			else if (busy) toast('正在处理上一项操作');
+			if (busy) toast('正在处理上一项操作');
 			return;
 		}
-		stopAutoRefresh();
 		refreshingAccountId = accountId;
 		var spinStartedAt = Date.now();
 		render();
@@ -1762,8 +1717,8 @@
 			}
 			state.stale = !!result.stale;
 			if (result.stale) {
-				if (!options.silent) toast(result.message || '数据可能已过期', true);
-			} else if (!options.silent) {
+				toast(result.message || '数据可能已过期', true);
+			} else {
 				toast(result.message || '余量已刷新');
 			}
 		} catch (error) {
@@ -1778,16 +1733,14 @@
 				});
 			}
 			state.stale = true;
-			if (!options.silent) toast(message, true);
+			toast(message, true);
 		} finally {
-			var minimumSpin = options.auto ? 250 : 1200;
-			var spinRemaining = minimumSpin - (Date.now() - spinStartedAt);
+			var spinRemaining = 1200 - (Date.now() - spinStartedAt);
 			if (spinRemaining > 0) {
 				await new Promise(function (resolve) { window.setTimeout(resolve, spinRemaining); });
 			}
 			refreshingAccountId = '';
 			render();
-			scheduleAutoRefresh();
 		}
 	}
 	async function rename(accountId) {
@@ -1906,11 +1859,6 @@
 		else if (target.hasAttribute('data-auto-save')) saveAuto(target.getAttribute('data-auto-save'));
 		else if (target.hasAttribute('data-auto-now')) autoNow(target.getAttribute('data-auto-now'));
 	});
-	document.addEventListener('visibilitychange', function () {
-		if (document.visibilityState === 'visible') scheduleAutoRefresh();
-		else stopAutoRefresh();
-	});
-	window.addEventListener('beforeunload', stopAutoRefresh);
 	setMiniLoginMode('sms');
 	updateAddForm();
 	load();
