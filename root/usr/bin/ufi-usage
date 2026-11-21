@@ -35,7 +35,7 @@ from typing import Any
 
 
 APP_NAME = "luci-app-ufi-usage"
-APP_VERSION = "1.0.0-r25"
+APP_VERSION = "1.0.0-r26"
 LEGACY_DATA_DIR = Path("/etc/ufi-bill")
 DATA_DIR = Path(os.environ.get("UFI_USAGE_DATA_DIR", "/etc/ufi-usage"))
 STATE_FILE = DATA_DIR / "state.json"
@@ -105,6 +105,21 @@ UNICOM_MXX_PACKAGE_URL = UNICOM_PACKAGE_URL.replace(
 UNICOM_MXX_BALANCE_URL = UNICOM_BALANCE_URL.replace(
     "m.client.10010.com", "mxx.client.10010.com"
 )
+UNICOM_MY_PACKAGE_URL = (
+    "https://mxx.client.10010.com/servicequerybusiness/queryPackage/myPackage"
+)
+UNICOM_MY_PACKAGE_FORM = {
+    "duanlianjieabc": "",
+    "channelCode": "",
+    "serviceType": "",
+    "saleChannel": "",
+    "externalSources": "",
+    "contactCode": "",
+    "ticket": "",
+    "ticketPhone": "",
+    "ticketChannel": "XCXWDTC",
+    "language": "chinese",
+}
 UNICOM_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
@@ -1043,6 +1058,172 @@ def unicom_normalize_time(value: Any) -> str | None:
     return parse_time(value)
 
 
+def unicom_date_value(value: Any) -> dt.date | None:
+    text = clean_text(value, 40)
+    for pattern in ("%Y.%m.%d", "%Y-%m-%d", "%Y/%m/%d"):
+        try:
+            return dt.datetime.strptime(text, pattern).date()
+        except ValueError:
+            continue
+    return None
+
+
+def unicom_profile_info(raw: dict) -> dict:
+    start = unicom_date_value(raw.get("productStartDate"))
+    today = dt.date.today()
+    tenure_months = None
+    if start:
+        tenure_months = max(
+            0,
+            (today.year - start.year) * 12
+            + today.month
+            - start.month
+            - (1 if today.day < start.day else 0),
+        )
+    contracts = []
+    for value in arr(raw.get("myActivit")):
+        activity = obj(value)
+        end = unicom_date_value(activity.get("enddate"))
+        days_left = (end - today).days if end else None
+        if days_left is None:
+            between = number(activity.get("between"))
+            days_left = int(between) if between is not None else None
+        name = clean_text(activity.get("activityname"), 160)
+        if not name and days_left is None:
+            continue
+        contracts.append(
+            {
+                "name": name or None,
+                "start_date": unicom_normalize_time(activity.get("startdate")),
+                "end_date": unicom_normalize_time(activity.get("enddate")),
+                "days_left": days_left,
+            }
+        )
+    active = [
+        item
+        for item in contracts
+        if item.get("days_left") is not None and int(item["days_left"]) >= 0
+    ]
+    active.sort(key=lambda item: int(item["days_left"]))
+    nearest = active[0] if active else {}
+    nearest_name = clean_text(nearest.get("name"), 160)
+    rebate_match = re.search(r"每月返费\s*(\d+)\s*元", nearest_name)
+    return {
+        "product_name": clean_text(raw.get("productName"), 100) or None,
+        "start_date": start.isoformat() + "T00:00:00" if start else None,
+        "tenure_months": tenure_months,
+        "contracts": contracts,
+        "contract_days": nearest.get("days_left"),
+        "contract_name": nearest_name or None,
+        "contract_end_date": nearest.get("end_date"),
+        "monthly_rebate_yuan": int(rebate_match.group(1)) if rebate_match else None,
+    }
+
+
+def unicom_family_members(package: dict) -> list[dict]:
+    members: dict[str, dict] = {}
+    share = obj(package.get("shareData"))
+
+    def record(value: Any) -> dict | None:
+        item = obj(value)
+        number = digits(item.get("usernumber") or item.get("userNumber"))
+        if not number:
+            return None
+        member = members.setdefault(
+            number,
+            {
+                "number": number,
+                "is_primary": False,
+                "is_current": False,
+                "flow_mb": 0.0,
+                "package_flow_mb": 0.0,
+                "voice_minutes": 0.0,
+                "sms_count": 0.0,
+            },
+        )
+        member["is_primary"] = member["is_primary"] or str(
+            item.get("viceCardflag")
+        ) == "1"
+        member["is_current"] = member["is_current"] or str(
+            item.get("currentLoginFlag")
+        ) == "1"
+        return member
+
+    for value in arr(share.get("viceCardList")):
+        member = record(value)
+        if member:
+            member["flow_mb"] = number(obj(value).get("use")) or member["flow_mb"]
+
+    resource_kinds = {"flow": "flow", "Voice": "voice", "smsList": "sms"}
+    for group_value in arr(package.get("resources")):
+        group = obj(group_value)
+        kind = resource_kinds.get(clean_text(group.get("type"), 30))
+        if not kind:
+            continue
+        for detail_value in arr(group.get("details")):
+            detail = obj(detail_value)
+            for member_value in arr(
+                detail.get("viceCardlist") or detail.get("viceCardList")
+            ):
+                member = record(member_value)
+                if not member:
+                    continue
+                used = number(obj(member_value).get("use")) or 0.0
+                if kind == "flow":
+                    member["package_flow_mb"] += used
+                elif kind == "voice":
+                    member["voice_minutes"] += used
+                else:
+                    member["sms_count"] += used
+
+    all_flow_mb = number(package.get("allUserFlow")) or 0.0
+    result = []
+    for member in members.values():
+        flow_mb = member["flow_mb"] or member["package_flow_mb"]
+        result.append(
+            {
+                "number_masked": mask_phone(member["number"]),
+                "is_primary": member["is_primary"],
+                "is_current": member["is_current"],
+                "flow_gb": round_number(flow_mb / MB_PER_GB),
+                "voice_minutes": round_number(member["voice_minutes"], 1),
+                "sms_count": round_number(member["sms_count"], 1),
+                "share_percent": round_number(
+                    flow_mb / all_flow_mb * 100 if all_flow_mb > 0 else 0.0,
+                    1,
+                ),
+            }
+        )
+    result.sort(
+        key=lambda item: (
+            0 if item.get("is_current") else 1,
+            0 if item.get("is_primary") else 1,
+            item.get("number_masked") or "",
+        )
+    )
+    return result
+
+
+def unicom_fetch_profile(opener: urllib.request.OpenerDirector) -> dict:
+    try:
+        payload = unicom_json_call(
+            opener,
+            UNICOM_MY_PACKAGE_URL,
+            dict(UNICOM_MY_PACKAGE_FORM),
+            referer="https://imgxx.client.10010.com/",
+            headers={
+                "Origin": "https://imgxx.client.10010.com",
+                "Accept": "application/json, text/plain, */*",
+            },
+        )
+    except UserError:
+        return {}
+    code = clean_text(payload.get("code"), 20)
+    if code and code not in {"0", "0000"}:
+        return {}
+    return obj(payload.get("data"))
+
+
 def parse_unicom_usage(package_payload: dict | None, balance_payload: dict | None, phone: str) -> dict:
     warnings: list[str] = []
     package = obj(package_payload)
@@ -1196,25 +1377,70 @@ def parse_unicom_usage(package_payload: dict | None, balance_payload: dict | Non
     balance = find_balance(balance_payload)
     if balance is None:
         warnings.append("联通余额接口未返回可用字段")
+    profile = unicom_profile_info(obj(package.get("__profile")))
+    family_members = unicom_family_members(package)
+    share = obj(package.get("shareData"))
+    summary = obj(package.get("summary"))
+
+    def balance_metric(*names: str) -> float | None:
+        pending = [obj(balance_payload)]
+        while pending:
+            node = pending.pop()
+            for name in names:
+                parsed = number(node.get(name))
+                if parsed is not None:
+                    return parsed
+            pending.extend(
+                obj(value) for value in node.values() if isinstance(value, dict)
+            )
+        return None
+
+    current_spend = balance_metric("realfeecustnew", "totalrealfee")
+    monthly_used_gb = sum(
+        value
+        for value in (
+            flow.get("general_used_gb"),
+            flow.get("directed_used_gb"),
+            flow.get("regional_used_gb"),
+        )
+        if isinstance(value, (int, float))
+    )
     return {
         "carrier": "unicom",
         "access_method": "carrier",
         "phone_masked": mask_phone(phone),
-        "plan_name": clean_text(package.get("packageName"), 100) or None,
-        "owner_name": None,
-        "tenure_months": None,
+        "plan_name": profile.get("product_name")
+        or clean_text(package.get("packageName"), 100)
+        or None,
+        "owner_name": clean_text(share.get("userName"), 60) or None,
+        "tenure_months": profile.get("tenure_months"),
         "star_level": None,
         "balance_yuan": round_number(balance),
         "last_month_spend_yuan": None,
-        "current_spend_yuan": None,
-        "current_spend_period": None,
-        "current_spend_as_of": None,
+        "current_spend_yuan": round_number(current_spend),
+        "current_spend_period": dt.date.today().strftime("%Y-%m"),
+        "current_spend_as_of": dt.date.today().isoformat(),
         "points": None,
         "flow": flow,
-        "monthly_used_gb": None,
+        "monthly_used_gb": round_number(monthly_used_gb),
         "voice": voice,
         "sms_usage": sms_usage,
         "packages": packages,
+        "profile_start_date": profile.get("start_date"),
+        "contracts": arr(profile.get("contracts")),
+        "contract_days": profile.get("contract_days"),
+        "contract_name": profile.get("contract_name"),
+        "contract_end_date": profile.get("contract_end_date"),
+        "monthly_rebate_yuan": profile.get("monthly_rebate_yuan"),
+        "family_member_count": len(family_members),
+        "family_members": family_members,
+        "speed_limit_gb": round_number(number(summary.get("limitValue"))),
+        "speed_limit_used_gb": round_number(
+            (number(summary.get("limitSum")) or 0.0) / MB_PER_GB
+        ),
+        "speed_state": clean_text(summary.get("speedState"), 40) or None,
+        "limit_speed": clean_text(summary.get("limitSpeed"), 40) or None,
+        "business_type": clean_text(package.get("businessType"), 60) or None,
         "cloud_card": None,
         "warnings": warnings,
     }
@@ -2041,6 +2267,9 @@ def unicom_fetch_sms_usage(
         warnings.append(safe_message(error, 100))
     if not package_payload and not balance_payload:
         raise AuthRequired("联通短信登录成功，但余量接口仍要求额外验证")
+    profile = unicom_fetch_profile(opener)
+    if profile:
+        package_payload["__profile"] = profile
     usage = parse_unicom_usage(package_payload, balance_payload, phone)
     usage["warnings"] = warnings + arr(usage.get("warnings"))
     return usage
@@ -2457,6 +2686,9 @@ def fetch_unicom(
         opener, package_url, dict(UNICOM_FORM_EMPTY)
     )
     balance_payload = unicom_json_call(opener, balance_url, {})
+    profile = unicom_fetch_profile(opener)
+    if profile:
+        package_payload["__profile"] = profile
     return package_payload, balance_payload, jar
 
 
@@ -3042,6 +3274,34 @@ def selftest() -> dict:
     unicom_usage = parse_unicom_usage(
         {
             "packageName": "测试套餐",
+            "__profile": {
+                "productName": "测试主套餐",
+                "productStartDate": "2024.01.01",
+                "myActivit": [
+                    {
+                        "activityname": "每月返费20元测试合约",
+                        "startdate": "2024-01-01",
+                        "enddate": "2099-12-31",
+                    }
+                ],
+            },
+            "shareData": {
+                "userName": "测试机主",
+                "viceCardList": [
+                    {
+                        "usernumber": "13100131000",
+                        "use": "1024",
+                        "viceCardflag": "1",
+                        "currentLoginFlag": "1",
+                    }
+                ],
+            },
+            "summary": {
+                "limitValue": "20",
+                "limitSum": "10240",
+                "speedState": "0",
+                "limitSpeed": "1Mbps",
+            },
             "unshared": {
                 "details": [
                     unicom_duplicate_detail,
@@ -3080,7 +3340,7 @@ def selftest() -> dict:
                 ]
             },
         },
-        {"curntbalancecust": "9.50"},
+        {"curntbalancecust": "9.50", "realfeecustnew": "12.34"},
         "13100131000",
     )
     assert unicom_usage["flow"]["general_remaining_gb"] == 4.0
@@ -3093,6 +3353,14 @@ def selftest() -> dict:
         for item in unicom_usage["packages"]
     )
     assert unicom_usage["balance_yuan"] == 9.5
+    assert unicom_usage["current_spend_yuan"] == 12.34
+    assert unicom_usage["plan_name"] == "测试主套餐"
+    assert unicom_usage["owner_name"] == "测试机主"
+    assert unicom_usage["family_member_count"] == 1
+    assert unicom_usage["family_members"][0]["number_masked"] == "131****1000"
+    assert unicom_usage["contract_days"] > 0
+    assert unicom_usage["monthly_rebate_yuan"] == 20
+    assert unicom_usage["speed_limit_gb"] == 20.0
 
     cloud_usage = parse_cloud_usage(
         "cloud",

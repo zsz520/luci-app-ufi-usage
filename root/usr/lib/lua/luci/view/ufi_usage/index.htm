@@ -453,6 +453,27 @@
 }
 #ufi-usage-app .ub-num { white-space: nowrap; font-variant-numeric: tabular-nums; }
 #ufi-usage-app .ub-expiry { color: var(--ub-muted); font-size: 10.5px; }
+#ufi-usage-app .ub-family-list { display: grid; gap: 8px; }
+#ufi-usage-app .ub-family-member {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	flex-wrap: wrap;
+	gap: 6px 14px;
+	padding: 10px 12px;
+	border: 1px solid var(--ub-border);
+	border-radius: 10px;
+	background: var(--ub-card-strong);
+}
+#ufi-usage-app .ub-family-identity { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+#ufi-usage-app .ub-family-stats {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px 14px;
+	color: var(--ub-muted);
+	font-size: 10.5px;
+	font-variant-numeric: tabular-nums;
+}
 #ufi-usage-app .ub-orders { display: grid; gap: 0; }
 #ufi-usage-app .ub-order {
 	display: flex;
@@ -1067,6 +1088,21 @@
 		}).join('');
 		return '<div class="ub-packages">' + html + '</div>';
 	}
+	function renderFamilyMembers(items) {
+		return '<div class="ub-family-list">' + items.map(function (item) {
+			var badges = '';
+			if (item.is_current) badges += '<span class="ub-badge shared">当前号码</span>';
+			if (item.is_primary) badges += '<span class="ub-badge">主卡</span>';
+			return '<div class="ub-family-member"><div class="ub-family-identity"><b>' +
+				esc(item.number_masked || '****') + '</b>' + badges + '</div>' +
+				'<div class="ub-family-stats">' +
+				'<span>流量 ' + num(item.flow_gb) + ' GB</span>' +
+				'<span>语音 ' + num(item.voice_minutes, 1) + ' 分钟</span>' +
+				'<span>短信 ' + num(item.sms_count, 1) + ' 条</span>' +
+				'<span>占比 ' + num(item.share_percent, 1) + '%</span>' +
+				'</div></div>';
+		}).join('') + '</div>';
+	}
 	function renderAccountList() {
 		if (!state.accounts.length) return '<div class="ub-empty">还没有余量账号</div>';
 		return state.accounts.map(function (account) {
@@ -1109,6 +1145,7 @@
 			}
 		}
 		var packages = renderPackageCards(usage.packages || []);
+		var familyMembers = usage.family_members || [];
 		var orders = (cloud.orders || []).map(function (item) {
 			return '<div class="ub-order"><div><div class="ub-order-name">' + esc(item.name) + '</div>' +
 				'<div class="ub-order-meta">' + esc([item.status_text, item.pay_type_text, item.created_at].filter(Boolean).join(' · ')) + '</div></div>' +
@@ -1122,6 +1159,8 @@
 		if (usage.voice) facts += '<div class="ub-fact"><span class="ub-label">语音剩余</span><b>' + num(usage.voice.remaining, 1) + ' 分钟</b></div>';
 		if (usage.sms_usage) facts += '<div class="ub-fact"><span class="ub-label">短信剩余</span><b>' + num(usage.sms_usage.remaining, 1) + ' 条</b></div>';
 		if (usage.tenure_months !== null && usage.tenure_months !== undefined) facts += '<div class="ub-fact"><span class="ub-label">网龄</span><b>' + Math.floor(usage.tenure_months / 12) + '年' + (usage.tenure_months % 12) + '月</b></div>';
+		if (usage.contract_days !== null && usage.contract_days !== undefined) facts += '<div class="ub-fact"><span class="ub-label">合约剩余</span><b>' + esc(usage.contract_days) + ' 天</b></div>';
+		if (usage.speed_limit_gb !== null && usage.speed_limit_gb !== undefined) facts += '<div class="ub-fact"><span class="ub-label">限速阈值</span><b>' + num(usage.speed_limit_gb) + ' GB</b></div>';
 		var warnings = (usage.warnings || []).length ?
 			'<section class="ub-card ub-warnings"><b>部分数据未完整读取</b><ul>' +
 			usage.warnings.map(function (item) { return '<li>' + esc(item) + '</li>'; }).join('') + '</ul></section>' : '';
@@ -1151,6 +1190,7 @@
 			'<div class="ub-who"><b>' + esc(account.provider_name) + '</b> · ' + esc(usage.phone_masked || account.identity_masked) +
 			(usage.owner_name ? ' · 机主 ' + esc(usage.owner_name) : '') + '</div></div>' +
 			'<div class="ub-plan"><div class="ub-label">当前套餐</div><div class="ub-plan-name">' + esc(usage.plan_name || '未返回套餐名称') + '</div>' +
+			(usage.contract_name ? '<div class="ub-sub">合约：' + esc(usage.contract_name) + '</div>' : '') +
 			(cloud.expires_at ? '<div class="ub-sub">到期 ' + esc(cloud.expires_at) + '</div>' : '') + '</div></div>' +
 			(facts ? '<div class="ub-facts">' + facts + '</div>' : '') + cloudMeta +
 			'<div class="ub-card-title" style="margin-top:15px"><b>流量余量</b><span class="ub-actions">' +
@@ -1162,6 +1202,7 @@
 			'<button class="ub-btn ub-action-btn danger" data-delete="' + attr(account.id) + '" title="删除账号" aria-label="删除账号">' + icon('trash') + '</button></span></div>' +
 			'<div class="ub-flow">' + flowHtml + '</div></section>' +
 			((usage.packages || []).length ? '<section class="ub-card"><div class="ub-card-title"><b>套餐与流量包</b><span class="ub-label">' + usage.packages.length + ' 项</span></div>' + packages + '</section>' : '') +
+			(familyMembers.length ? '<section class="ub-card"><div class="ub-card-title"><b>家庭共享成员</b><span class="ub-label">' + familyMembers.length + ' 个</span></div>' + renderFamilyMembers(familyMembers) + '</section>' : '') +
 			(orders ? '<section class="ub-card"><div class="ub-card-title"><b>订单记录</b></div><div class="ub-orders">' + orders + '</div></section>' : '') +
 			autoPanel + warnings +
 			'<div class="ub-cache">最后成功更新：' + esc(dateText(account.last_ok_at || account.cached_at)) + '</div>';

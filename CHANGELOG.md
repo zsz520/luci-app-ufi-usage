@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.0-r26
+
+- Added China Unicom `myPackage` package and contract profile retrieval.
+- Added current-month real fee, tenure, contract countdown, rebate, and speed-limit data.
+- Added family-sharing member usage for flow, voice, and SMS.
+- Added responsive family-member cards to the LuCI usage panel.
+
 ## 1.0.0-r25
 
 - Added one-click `ecs_token` export for China Unicom accounts.

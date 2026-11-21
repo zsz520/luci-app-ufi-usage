@@ -59,4 +59,4 @@ else
 		/bin/sh /work/build_apk.sh
 fi
 
-echo "$ROOT_DIR/outputs/luci-app-ufi-usage-1.0.0-r25.apk"
+echo "$ROOT_DIR/outputs/luci-app-ufi-usage-1.0.0-r26.apk"

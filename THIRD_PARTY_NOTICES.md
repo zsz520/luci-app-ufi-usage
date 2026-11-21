@@ -1,5 +1,16 @@
 # Third-party notices
 
+## weda0511 / ha_unicom_bill
+
+China Unicom `myPackage` endpoint behavior and field names were cross-checked
+against:
+
+<https://github.com/weda0511/ha_unicom_bill>
+
+The referenced project is licensed under GPL-3.0. This repository contains an
+independent standard-library implementation for the LuCI plugin and does not
+include source files from that project.
+
 ## Asunano / UFI-AXIS
 
 Carrier endpoint behavior, authentication flows, field mappings, parser
