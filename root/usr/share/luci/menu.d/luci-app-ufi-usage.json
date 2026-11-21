@@ -1,0 +1,13 @@
+{
+	"admin/services/ufi_usage": {
+		"title": "余量面板",
+		"order": 81,
+		"action": {
+			"type": "view",
+			"path": "ufi_usage/index"
+		},
+		"depends": {
+			"acl": [ "luci-app-ufi-usage" ]
+		}
+	}
+}

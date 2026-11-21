@@ -1,0 +1,24 @@
+# Changelog
+
+## 1.0.0-r25
+
+- Added one-click `ecs_token` export for China Unicom accounts.
+- Export opens a masked token dialog with copy, reveal, and TXT download actions.
+- Token export reuses the encrypted LuCI session and does not write the token to logs.
+
+## 1.0.0-r24
+
+- Made account dialogs follow the active LuCI light or dark theme.
+
+## 1.0.0-r23
+
+- Added a dedicated CSS loading ring for manual refresh.
+- Kept the refresh indicator visible for at least 1.2 seconds.
+
+## Earlier 1.0.0 revisions
+
+- Renamed the plugin from the bill-oriented package to `luci-app-ufi-usage`.
+- Migrated legacy account state and data paths while keeping carrier API field names.
+- Added full-width usage cards, icon-only account actions, and improved responsive layout.
+- Added China Unicom SMS, token, QR, and password login flows.
+- Added China Mobile, Cloud Card, and Xiaojing Card usage providers.

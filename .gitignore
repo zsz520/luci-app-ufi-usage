@@ -1,0 +1,17 @@
+/build/
+/outputs/*.apk
+/outputs/*.apk.sha256
+/outputs/*.tar
+/outputs/*.gz
+
+**/__pycache__/
+*.py[cod]
+.jscheck.js
+.preview*.html
+.preview*.png
+.ring-preview.*
+.http-server.pid
+
+.DS_Store
+Thumbs.db
+*.log

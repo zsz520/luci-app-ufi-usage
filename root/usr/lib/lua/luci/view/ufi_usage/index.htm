@@ -1,0 +1,1703 @@
+<%+header%>
+
+<style>
+#ufi-usage-app {
+	--ub-accent: #18a77b;
+	--ub-accent-strong: #0c8862;
+	--ub-accent-soft: rgba(24, 167, 123, .13);
+	--ub-warn: #d78a16;
+	--ub-error: #d64b4b;
+	--ub-border: rgba(127, 140, 160, .22);
+	--ub-muted: #768197;
+	--ub-card: var(--background-color-medium, rgba(127, 140, 160, .07));
+	--ub-card-strong: var(--background-color-high, rgba(127, 140, 160, .12));
+	max-width: 1220px;
+	margin: 0 auto;
+	color: var(--text-color, inherit);
+	line-height: 1.55;
+}
+#ufi-usage-app * { box-sizing: border-box; }
+#ufi-usage-app button,
+#ufi-usage-app input,
+#ufi-usage-app select { font: inherit; }
+#ufi-usage-app button { cursor: pointer; }
+#ufi-usage-app .ub-head {
+	display: flex;
+	align-items: flex-start;
+	flex-wrap: wrap;
+	gap: 14px 16px;
+	margin: 0 0 16px;
+	padding: 17px 18px;
+	border: 1px solid var(--ub-border);
+	border-radius: 18px;
+	background: linear-gradient(135deg, var(--ub-card), transparent 145%);
+	box-shadow: 0 12px 36px rgba(20, 40, 60, .06);
+}
+#ufi-usage-app .ub-title-block {
+	min-width: 0;
+	flex: 1 1 260px;
+	text-align: left;
+}
+#ufi-usage-app .ub-title-block > * {
+	margin-left: 0 !important;
+	padding-left: 0 !important;
+	text-align: left !important;
+	text-indent: 0 !important;
+}
+#ufi-usage-app .ub-title-block h2::before,
+#ufi-usage-app .ub-title-block h2::after {
+	content: none !important;
+}
+#ufi-usage-app .ub-eyebrow {
+	color: var(--ub-accent-strong);
+	font-size: 10px;
+	font-weight: 750;
+	line-height: 1.2;
+	letter-spacing: .18em;
+	text-transform: uppercase;
+}
+#ufi-usage-app h2 { margin: 2px 0 0; font-size: 23px; line-height: 1.25; letter-spacing: -.035em; }
+#ufi-usage-app .ub-sub { margin-top: 3px; color: var(--ub-muted); font-size: 11.5px; }
+#ufi-usage-app .ub-head-spacer { flex: 1; }
+#ufi-usage-app .ub-head-actions {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 8px;
+	margin-left: auto;
+}
+#ufi-usage-app .ub-auto-pill {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 7px 10px;
+	border: 1px solid var(--ub-border);
+	border-radius: 999px;
+	background: var(--ub-card-strong);
+	color: var(--ub-muted);
+	font-size: 10.5px;
+	white-space: nowrap;
+}
+#ufi-usage-app .ub-auto-pill::before {
+	content: '';
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--ub-accent);
+	box-shadow: 0 0 0 3px var(--ub-accent-soft);
+}
+#ufi-usage-app .ub-btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	border: 1px solid var(--ub-border);
+	background: var(--ub-card);
+	color: inherit;
+	border-radius: 9px;
+	padding: 8px 12px;
+	min-height: 35px;
+	transition: border-color .18s, background .18s, opacity .18s, transform .18s;
+}
+#ufi-usage-app .ub-btn:hover { border-color: var(--ub-accent); }
+#ufi-usage-app .ub-btn:active:not(:disabled) { transform: translateY(1px); }
+#ufi-usage-app .ub-btn.primary {
+	border-color: transparent;
+	background: var(--ub-accent);
+	color: #fff;
+}
+#ufi-usage-app .ub-btn.primary:hover { background: var(--ub-accent-strong); }
+#ufi-usage-app .ub-btn.danger { color: var(--ub-error); }
+#ufi-usage-app .ub-btn:disabled { opacity: .48; cursor: not-allowed; }
+#ufi-usage-app .ub-icon {
+	width: 15px;
+	height: 15px;
+	flex: 0 0 auto;
+	transform-box: view-box;
+	transform-origin: center center;
+}
+#ufi-usage-app .ub-refresh-ring {
+	display: block;
+	flex: 0 0 auto;
+	width: 15px;
+	height: 15px;
+	box-sizing: border-box;
+	border: 2px solid currentColor;
+	border-right-color: transparent;
+	border-radius: 50%;
+	transform-origin: center center;
+	animation: ub-refresh-ring-spin .7s linear infinite;
+	will-change: transform;
+}
+@keyframes ub-refresh-ring-spin {
+	from { transform: rotate(0deg); }
+	to { transform: rotate(360deg); }
+}
+#ufi-usage-app .ub-action-btn[data-refresh]:disabled {
+	opacity: 1;
+	border-color: rgba(24, 167, 123, .45);
+	background: var(--ub-accent-soft);
+	color: var(--ub-accent-strong);
+	cursor: wait;
+}
+#ufi-usage-app .ub-layout {
+	display: grid;
+	grid-template-columns: 265px minmax(0, 1fr);
+	gap: 14px;
+	align-items: start;
+}
+#ufi-usage-app .ub-panel,
+#ufi-usage-app .ub-card {
+	border: 1px solid var(--ub-border);
+	border-radius: 14px;
+	background: var(--ub-card);
+}
+#ufi-usage-app .ub-side { padding: 12px; position: sticky; top: 12px; }
+#ufi-usage-app .ub-side-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin: 0 2px 10px;
+}
+#ufi-usage-app .ub-side-head b { font-size: 13px; }
+#ufi-usage-app .ub-account {
+	width: 100%;
+	text-align: left;
+	display: grid;
+	grid-template-columns: 34px minmax(0, 1fr) 8px;
+	gap: 9px;
+	align-items: center;
+	border: 1px solid transparent;
+	border-radius: 10px;
+	background: transparent;
+	color: inherit;
+	padding: 9px 8px;
+	margin: 2px 0;
+}
+#ufi-usage-app .ub-account:hover { background: var(--ub-card-strong); }
+#ufi-usage-app .ub-account.active {
+	border-color: rgba(24, 167, 123, .34);
+	background: var(--ub-accent-soft);
+}
+#ufi-usage-app .ub-avatar {
+	width: 34px;
+	height: 34px;
+	border-radius: 10px;
+	display: grid;
+	place-items: center;
+	font-size: 12px;
+	font-weight: 800;
+	background: var(--ub-card-strong);
+	color: var(--ub-accent-strong);
+}
+#ufi-usage-app .ub-account-main { min-width: 0; }
+#ufi-usage-app .ub-account-name {
+	font-size: 12.5px;
+	font-weight: 650;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+#ufi-usage-app .ub-account-sub {
+	font-size: 10.5px;
+	color: var(--ub-muted);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+#ufi-usage-app .ub-dot {
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: var(--ub-warn);
+}
+#ufi-usage-app .ub-dot.ready { background: var(--ub-accent); }
+#ufi-usage-app .ub-empty {
+	padding: 22px 8px;
+	text-align: center;
+	color: var(--ub-muted);
+	font-size: 12px;
+}
+#ufi-usage-app .ub-side-add {
+	width: 100%;
+	margin-top: 10px;
+}
+#ufi-usage-app .ub-main { min-width: 0; display: grid; gap: 12px; }
+#ufi-usage-app .ub-simbar {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px 14px;
+	align-items: center;
+	padding: 10px 13px;
+	border: 1px solid var(--ub-border);
+	border-radius: 12px;
+	background: var(--ub-card);
+	font-size: 11.5px;
+}
+#ufi-usage-app .ub-pill {
+	display: inline-flex;
+	align-items: center;
+	border-radius: 999px;
+	padding: 2px 8px;
+	font-size: 10.5px;
+	font-weight: 650;
+	background: var(--ub-card-strong);
+}
+#ufi-usage-app .ub-pill.good { background: var(--ub-accent-soft); color: var(--ub-accent-strong); }
+#ufi-usage-app .ub-pill.warn { background: rgba(215, 138, 22, .15); color: var(--ub-warn); }
+#ufi-usage-app .ub-muted { color: var(--ub-muted); }
+#ufi-usage-app .ub-hero { padding: 18px; }
+#ufi-usage-app .ub-hero-top {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(180px, .7fr);
+	gap: 16px;
+	align-items: center;
+}
+#ufi-usage-app .ub-balance {
+	font-size: clamp(32px, 5vw, 50px);
+	font-weight: 780;
+	letter-spacing: -.045em;
+	line-height: 1.08;
+	font-variant-numeric: tabular-nums;
+}
+#ufi-usage-app .ub-balance small { font-size: 16px; font-weight: 550; margin-right: 3px; }
+#ufi-usage-app .ub-who { margin-top: 5px; color: var(--ub-muted); font-size: 12px; }
+#ufi-usage-app .ub-plan {
+	border-left: 1px solid var(--ub-border);
+	padding-left: 18px;
+	min-width: 0;
+}
+#ufi-usage-app .ub-label { font-size: 10.5px; color: var(--ub-muted); }
+#ufi-usage-app .ub-plan-name {
+	font-weight: 650;
+	overflow-wrap: anywhere;
+	margin-top: 2px;
+}
+#ufi-usage-app .ub-facts {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 9px 22px;
+	margin-top: 15px;
+	padding-top: 12px;
+	border-top: 1px solid var(--ub-border);
+}
+#ufi-usage-app .ub-fact b { display: block; font-size: 15px; font-variant-numeric: tabular-nums; }
+#ufi-usage-app .ub-card { padding: 14px; }
+#ufi-usage-app .ub-card-title {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+	margin-bottom: 10px;
+}
+#ufi-usage-app .ub-card-title b { font-size: 13px; }
+#ufi-usage-app .ub-action-btn {
+	width: 36px;
+	min-width: 36px;
+	min-height: 33px;
+	padding: 7px;
+	font-size: 11px;
+}
+#ufi-usage-app .ub-action-btn.danger:hover {
+	border-color: rgba(214, 75, 75, .45);
+	background: rgba(214, 75, 75, .08);
+}
+#ufi-usage-app .ub-stale {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 5px 12px;
+	padding: 10px 12px;
+	border: 1px solid rgba(215, 138, 22, .35);
+	border-radius: 11px;
+	background: rgba(215, 138, 22, .09);
+	color: var(--ub-warn);
+	font-size: 11px;
+}
+#ufi-usage-app .ub-stale b { font-size: 11.5px; }
+#ufi-usage-app .ub-stale span:last-child { margin-left: auto; color: var(--ub-muted); }
+#ufi-usage-app .ub-flow { display: grid; gap: 0; }
+#ufi-usage-app .ub-flow-row {
+	display: grid;
+	gap: 7px;
+	padding: 9px 0;
+	border-bottom: 1px solid var(--ub-border);
+	font-size: 12px;
+}
+#ufi-usage-app .ub-flow-row:first-child { padding-top: 2px; }
+#ufi-usage-app .ub-flow-row:last-child { padding-bottom: 0; border-bottom: 0; }
+#ufi-usage-app .ub-flow-head {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 14px;
+}
+#ufi-usage-app .ub-flow-head > b { flex: 0 0 auto; }
+#ufi-usage-app .ub-bar {
+	height: 8px;
+	border-radius: 999px;
+	overflow: hidden;
+	background: var(--ub-card-strong);
+}
+#ufi-usage-app .ub-bar i {
+	display: block;
+	height: 100%;
+	min-width: 2px;
+	border-radius: inherit;
+	background: var(--ub-accent);
+}
+#ufi-usage-app .ub-bar.regional i { background: var(--ub-warn); }
+#ufi-usage-app .ub-flow-row > .ub-bar {
+	height: 10px;
+	background: rgba(127, 140, 160, .24);
+}
+#ufi-usage-app .ub-flow-row > .ub-bar i { min-width: 0; }
+#ufi-usage-app .ub-flow-value {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	justify-content: flex-end;
+	gap: 3px 8px;
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+}
+#ufi-usage-app .ub-flow-value strong { font-size: 12.5px; }
+#ufi-usage-app .ub-flow-value small { color: var(--ub-muted); font-size: 10.5px; }
+#ufi-usage-app .ub-packages {
+	display: grid;
+	grid-template-columns: 1fr;
+	gap: 9px;
+}
+#ufi-usage-app .ub-package {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	grid-template-rows: auto auto auto;
+	gap: 9px 18px;
+	padding: 13px;
+	border: 1px solid var(--ub-border);
+	border-radius: 12px;
+	background: var(--ub-card-strong);
+	font-size: 12px;
+}
+#ufi-usage-app .ub-package.unlimited {
+	border-color: rgba(215, 138, 22, .48);
+	background: linear-gradient(145deg, rgba(215, 138, 22, .12), var(--ub-card-strong));
+}
+#ufi-usage-app .ub-package-head {
+	grid-column: 1;
+	grid-row: 1;
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 8px;
+}
+#ufi-usage-app .ub-package-name { min-width: 0; overflow-wrap: anywhere; font-weight: 650; line-height: 1.45; }
+#ufi-usage-app .ub-package-badges { display: flex; flex-wrap: wrap; gap: 5px; }
+#ufi-usage-app .ub-badge {
+	display: inline-flex;
+	align-items: center;
+	border: 1px solid var(--ub-border);
+	border-radius: 999px;
+	padding: 1px 6px;
+	font-size: 9.5px;
+	color: var(--ub-muted);
+	white-space: nowrap;
+}
+#ufi-usage-app .ub-badge.unlimited,
+#ufi-usage-app .ub-badge.shared {
+	border: 1px solid var(--ub-border);
+	border-color: rgba(215, 138, 22, .5);
+	color: var(--ub-warn);
+	background: rgba(215, 138, 22, .1);
+}
+#ufi-usage-app .ub-package-main {
+	grid-column: 2;
+	grid-row: 1;
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	justify-content: center;
+	gap: 8px;
+}
+#ufi-usage-app .ub-package-main b {
+	font-size: 29px;
+	line-height: 1;
+	letter-spacing: -.04em;
+	font-variant-numeric: tabular-nums;
+}
+#ufi-usage-app .ub-package-main small { color: var(--ub-muted); font-size: 10px; }
+#ufi-usage-app .ub-package-used {
+	grid-column: 1 / -1;
+	grid-row: 3;
+	display: flex;
+	justify-content: space-between;
+	gap: 8px;
+	color: var(--ub-muted);
+	font-size: 10.5px;
+	font-variant-numeric: tabular-nums;
+}
+#ufi-usage-app .ub-package .ub-bar.unlimited i {
+	background: linear-gradient(90deg, #2fbf8f, #e4b542, #e67668);
+}
+#ufi-usage-app .ub-package > .ub-bar {
+	grid-column: 1 / -1;
+	grid-row: 2;
+	align-self: center;
+	width: 100%;
+	height: 10px;
+	background: rgba(127, 140, 160, .24);
+}
+#ufi-usage-app .ub-package > .ub-bar i {
+	min-width: 0;
+}
+#ufi-usage-app .ub-num { white-space: nowrap; font-variant-numeric: tabular-nums; }
+#ufi-usage-app .ub-expiry { color: var(--ub-muted); font-size: 10.5px; }
+#ufi-usage-app .ub-orders { display: grid; gap: 0; }
+#ufi-usage-app .ub-order {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 9px 0;
+	border-bottom: 1px solid var(--ub-border);
+	font-size: 12px;
+}
+#ufi-usage-app .ub-order:last-child { border-bottom: 0; padding-bottom: 0; }
+#ufi-usage-app .ub-order-name { font-weight: 600; }
+#ufi-usage-app .ub-order-meta { color: var(--ub-muted); font-size: 10.5px; margin-top: 2px; }
+#ufi-usage-app .ub-warnings {
+	border-color: rgba(215, 138, 22, .32);
+	background: rgba(215, 138, 22, .08);
+	font-size: 11.5px;
+}
+#ufi-usage-app .ub-warnings ul { margin: 6px 0 0 18px; padding: 0; }
+#ufi-usage-app .ub-cache {
+	font-size: 10.5px;
+	color: var(--ub-muted);
+	text-align: right;
+	margin-top: -4px;
+}
+#ufi-usage-app .ub-cta { padding: 32px 20px; text-align: center; }
+#ufi-usage-app .ub-cta h3 { margin: 0 0 5px; }
+#ufi-usage-app .ub-cta p { margin: 0 auto 16px; max-width: 500px; color: var(--ub-muted); font-size: 12px; }
+#ufi-usage-app .ub-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+#ufi-usage-app .ub-modal-mask {
+	position: fixed;
+	inset: 0;
+	z-index: 1100;
+	background: rgba(10, 18, 26, .55);
+	display: grid;
+	place-items: center;
+	padding: 16px;
+}
+#ufi-usage-app .ub-modal-mask.hidden,
+#ufi-usage-app .hidden { display: none !important; }
+#ufi-usage-app .ub-modal {
+	width: min(590px, 100%);
+	max-height: min(780px, calc(100vh - 32px));
+	overflow: auto;
+	border: 1px solid var(--ub-border);
+	border-radius: 16px;
+	padding: 16px;
+	background: var(--background-color-high, var(--background-color-medium, #f7f9fb));
+	color: var(--text-color, #17212b);
+	box-shadow: 0 24px 80px rgba(0, 0, 0, .28);
+}
+#ufi-usage-app .ub-modal-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+	margin-bottom: 12px;
+}
+#ufi-usage-app .ub-modal-head b { font-size: 16px; }
+#ufi-usage-app .ub-field { margin: 10px 0; }
+#ufi-usage-app .ub-field label {
+	display: block;
+	margin-bottom: 5px;
+	font-size: 11px;
+	color: var(--ub-muted);
+}
+#ufi-usage-app .ub-field input,
+#ufi-usage-app .ub-field select,
+#ufi-usage-app .ub-field textarea {
+	width: 100%;
+	border: 1px solid var(--ub-border);
+	border-radius: 9px;
+	padding: 9px 10px;
+	background: var(--background-color-low, transparent);
+	color: inherit;
+	outline: none;
+}
+#ufi-usage-app .ub-field input:focus,
+#ufi-usage-app .ub-field select:focus,
+#ufi-usage-app .ub-field textarea:focus { border-color: var(--ub-accent); }
+#ufi-usage-app .ub-field textarea { resize: vertical; min-height: 92px; line-height: 1.45; }
+#ufi-usage-app .ub-token-value {
+	min-height: 156px;
+	font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+	font-size: 11px;
+	line-height: 1.5;
+	overflow-wrap: anywhere;
+}
+#ufi-usage-app .ub-token-meta {
+	padding: 8px 10px;
+	border-radius: 9px;
+	background: var(--ub-card-strong);
+}
+#ufi-usage-app .ub-segment {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 6px;
+}
+#ufi-usage-app .ub-segment.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+#ufi-usage-app .ub-segment.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+#ufi-usage-app .ub-segment label {
+	border: 1px solid var(--ub-border);
+	border-radius: 8px;
+	padding: 8px;
+	text-align: center;
+	cursor: pointer;
+	color: inherit;
+	font-size: 11.5px;
+}
+#ufi-usage-app .ub-segment input { display: none; }
+#ufi-usage-app .ub-segment label:has(input:checked) {
+	border-color: var(--ub-accent);
+	background: var(--ub-accent-soft);
+	color: var(--ub-accent-strong);
+	font-weight: 650;
+}
+#ufi-usage-app .ub-hint {
+	color: var(--ub-muted);
+	font-size: 11px;
+	line-height: 1.55;
+}
+#ufi-usage-app .ub-login-tabs {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 4px;
+	padding: 4px;
+	margin: 12px 0;
+	border-radius: 10px;
+	background: var(--ub-card-strong);
+}
+#ufi-usage-app .ub-login-tab {
+	border: 0;
+	border-radius: 7px;
+	padding: 8px 6px;
+	background: transparent;
+	color: var(--ub-muted);
+	font-size: 11px;
+}
+#ufi-usage-app .ub-login-tab.active {
+	background: var(--background-color-high, #fff);
+	color: var(--ub-accent-strong);
+	font-weight: 650;
+	box-shadow: 0 2px 8px rgba(0, 0, 0, .08);
+}
+#ufi-usage-app .ub-login-pane { display: grid; gap: 9px; }
+#ufi-usage-app .ub-code-line {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	gap: 7px;
+}
+#ufi-usage-app .ub-code-line .ub-btn { white-space: nowrap; }
+#ufi-usage-app .ub-more {
+	margin-top: 12px;
+	border-top: 1px solid var(--ub-border);
+	padding-top: 10px;
+}
+#ufi-usage-app .ub-more summary {
+	cursor: pointer;
+	color: var(--ub-muted);
+	font-size: 11px;
+}
+#ufi-usage-app .ub-more[open] summary { margin-bottom: 8px; }
+#ufi-usage-app .ub-code {
+	text-align: center !important;
+	font-size: 20px !important;
+	letter-spacing: .28em;
+	font-variant-numeric: tabular-nums;
+}
+#ufi-usage-app .ub-qr {
+	display: block;
+	width: min(210px, 70vw);
+	height: auto;
+	margin: 14px auto;
+	border-radius: 10px;
+	background: #fff;
+	padding: 7px;
+}
+#ufi-usage-app .ub-verify-frame {
+	display: block;
+	width: min(920px, 94vw);
+	height: min(680px, 78vh);
+	border: 0;
+	border-radius: 12px;
+	background: #fff;
+}
+#ufi-usage-app .ub-foot {
+	margin: 14px 2px 4px;
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: space-between;
+	gap: 8px;
+	color: var(--ub-muted);
+	font-size: 10px;
+}
+#ufi-usage-app .ub-foot a { color: var(--ub-accent-strong); }
+#ufi-usage-app .ub-auto-grid {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 8px;
+	margin-top: 10px;
+}
+#ufi-usage-app .ub-auto-note {
+	padding: 8px 10px;
+	border-radius: 8px;
+	background: var(--ub-card-strong);
+	color: var(--ub-muted);
+	font-size: 11px;
+}
+#ufi-usage-app .ub-toast {
+	position: fixed;
+	z-index: 1200;
+	right: 20px;
+	bottom: 20px;
+	max-width: min(420px, calc(100vw - 40px));
+	border-radius: 10px;
+	padding: 10px 14px;
+	background: #1d2935;
+	color: #fff;
+	box-shadow: 0 12px 36px rgba(0, 0, 0, .3);
+	font-size: 12px;
+	transition: opacity .2s;
+}
+#ufi-usage-app .ub-toast.error { background: #9f3030; }
+@media (max-width: 900px) {
+	#ufi-usage-app .ub-layout { grid-template-columns: 1fr; }
+	#ufi-usage-app .ub-side { position: static; }
+	#ufi-usage-app .ub-account-list {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+}
+@media (max-width: 760px) {
+	#ufi-usage-app .ub-head { align-items: flex-start; padding: 15px; }
+	#ufi-usage-app .ub-head-actions { width: 100%; justify-content: flex-start; margin-left: 0; }
+	#ufi-usage-app .ub-head-actions .ub-btn { margin-left: auto; }
+	#ufi-usage-app .ub-card-title { align-items: flex-start; flex-wrap: wrap; }
+	#ufi-usage-app .ub-card-title .ub-actions { width: 100%; }
+}
+@media (max-width: 560px) {
+	#ufi-usage-app .ub-head { gap: 11px 12px; border-radius: 15px; }
+	#ufi-usage-app h2 { font-size: 20px; }
+	#ufi-usage-app .ub-head .ub-btn .wide { display: none; }
+	#ufi-usage-app .ub-segment.four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+	#ufi-usage-app .ub-hero-top { grid-template-columns: 1fr; }
+	#ufi-usage-app .ub-plan { border-left: 0; border-top: 1px solid var(--ub-border); padding: 12px 0 0; }
+	#ufi-usage-app .ub-flow-head { align-items: flex-start; flex-direction: column; gap: 3px; }
+	#ufi-usage-app .ub-flow-value { justify-content: flex-start; text-align: left; }
+	#ufi-usage-app .ub-packages { grid-template-columns: 1fr; }
+	#ufi-usage-app .ub-package { grid-template-columns: 1fr; }
+	#ufi-usage-app .ub-package-head,
+	#ufi-usage-app .ub-package-main,
+	#ufi-usage-app .ub-package > .ub-bar,
+	#ufi-usage-app .ub-package-used { grid-column: 1; grid-row: auto; }
+	#ufi-usage-app .ub-package-main { align-items: flex-start; }
+	#ufi-usage-app .ub-code-line { grid-template-columns: 1fr; }
+	#ufi-usage-app .ub-auto-grid { grid-template-columns: 1fr; }
+	#ufi-usage-app .ub-account-list { grid-template-columns: 1fr; }
+	#ufi-usage-app .ub-action-btn { flex: 0 0 36px; }
+	#ufi-usage-app .ub-stale span:last-child { margin-left: 0; }
+}
+</style>
+
+<div id="ufi-usage-app" aria-live="polite">
+	<div class="ub-head">
+		<div class="ub-title-block">
+			<div class="ub-eyebrow">Usage overview</div>
+			<h2>套餐余量</h2>
+			<div class="ub-sub">移动、联通、云上卡与小鲸卡 · 本机加密存储 · 每 60 秒自动刷新</div>
+		</div>
+		<div class="ub-head-actions">
+			<span class="ub-auto-pill">自动刷新 60 秒</span>
+			<button class="ub-btn primary" id="ub-add-top">＋ 添加账号</button>
+		</div>
+	</div>
+
+	<div id="ub-loading" class="ub-card ub-cta">正在读取账号与余量…</div>
+	<div id="ub-root" class="hidden"></div>
+
+	<div id="ub-add-mask" class="ub-modal-mask hidden" role="dialog" aria-modal="true">
+		<div class="ub-modal">
+			<div class="ub-modal-head">
+				<b>添加余量账号</b>
+				<button class="ub-btn" id="ub-add-close" aria-label="关闭">关闭</button>
+			</div>
+			<div id="ub-add-form">
+				<div class="ub-field">
+					<label>账号类型</label>
+					<div class="ub-segment four">
+						<label><input type="radio" name="ub-provider" value="mobile" checked>中国移动</label>
+						<label><input type="radio" name="ub-provider" value="unicom">中国联通</label>
+						<label><input type="radio" name="ub-provider" value="cloud">云上卡</label>
+						<label><input type="radio" name="ub-provider" value="xj">小鲸卡</label>
+					</div>
+				</div>
+				<div id="ub-generic-fields">
+					<div class="ub-field" id="ub-identity-field">
+						<label id="ub-identity-label">手机号</label>
+						<input id="ub-identity" inputmode="numeric" autocomplete="off" maxlength="40">
+					</div>
+					<div class="ub-field hidden" id="ub-verify-field">
+						<label>绑定手机号后四位</label>
+						<input id="ub-verify" inputmode="numeric" autocomplete="off" maxlength="4">
+					</div>
+				</div>
+				<div id="ub-unicom-panel" class="hidden">
+					<div class="ub-login-tabs" role="tablist" aria-label="中国联通登录方式">
+						<button class="ub-login-tab active" type="button" data-unicom-tab="sms" role="tab" aria-selected="true">短信验证码</button>
+						<button class="ub-login-tab" type="button" data-unicom-tab="token" role="tab" aria-selected="false">Token 登录</button>
+						<button class="ub-login-tab" type="button" data-unicom-tab="qr" role="tab" aria-selected="false">扫码登录</button>
+					</div>
+					<div id="ub-unicom-sms-pane" class="ub-login-pane">
+						<div class="ub-field">
+							<label>联通手机号</label>
+							<input id="ub-unicom-phone" inputmode="numeric" autocomplete="tel" maxlength="11" placeholder="11 位手机号">
+						</div>
+						<div class="ub-field">
+							<label>短信验证码</label>
+							<div class="ub-code-line">
+								<input class="ub-code" id="ub-unicom-code" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="6 位验证码">
+								<button class="ub-btn primary" id="ub-unicom-send" type="button">发送验证码</button>
+							</div>
+						</div>
+						<p class="ub-hint" id="ub-unicom-sms-hint">先发送验证码；遇到安全验证时会打开联通官方验证页。</p>
+						<button class="ub-btn primary" id="ub-unicom-verify" type="button" disabled>验证码登录</button>
+					</div>
+					<div id="ub-unicom-token-pane" class="ub-login-pane hidden">
+						<div class="ub-field">
+							<label>手机号（可选）</label>
+							<input id="ub-unicom-token-phone" inputmode="numeric" autocomplete="tel" maxlength="11" placeholder="填写后余量面板会显示脱敏号码">
+						</div>
+						<div class="ub-field">
+							<label>ecs_token</label>
+							<textarea id="ub-unicom-token" autocomplete="off" spellcheck="false" placeholder="粘贴 ecs_token 恢复已登录会话"></textarea>
+						</div>
+						<p class="ub-hint">Token 仅用于查询联通余量，不会写入日志；会话数据仍在本机加密保存。</p>
+						<button class="ub-btn primary" id="ub-unicom-token-login" type="button">使用 Token 登录</button>
+					</div>
+					<div id="ub-unicom-qr-pane" class="ub-login-pane hidden">
+						<div class="ub-field">
+							<label>手机号（可选）</label>
+							<input id="ub-unicom-qr-phone" inputmode="numeric" autocomplete="tel" maxlength="11" placeholder="扫码后通常可自动识别">
+						</div>
+						<p class="ub-hint">短信安全验证无法完成时，请使用中国联通 App 扫码确认。</p>
+						<button class="ub-btn primary" id="ub-unicom-qr-start" type="button">生成登录二维码</button>
+						<div id="ub-unicom-qr-content" class="hidden">
+							<img class="ub-qr" id="ub-qr-image" alt="中国联通登录二维码">
+							<p class="ub-hint" id="ub-qr-status">请使用中国联通 App 扫码并确认。</p>
+						</div>
+					</div>
+					<details class="ub-more" id="ub-unicom-more">
+						<summary>更多登录方式</summary>
+						<div class="ub-field">
+							<label>联通服务密码（仅在联通允许时可用）</label>
+							<input id="ub-password" type="password" autocomplete="off" maxlength="32">
+						</div>
+						<button class="ub-btn" id="ub-unicom-password" type="button">服务密码登录</button>
+					</details>
+				</div>
+				<div class="ub-field">
+					<label>备注（可选）</label>
+					<input id="ub-label" maxlength="40" placeholder="例如：主卡、备用卡">
+				</div>
+				<p class="ub-hint" id="ub-add-hint"></p>
+				<div class="ub-actions">
+					<button class="ub-btn primary" id="ub-add-submit">继续</button>
+				</div>
+			</div>
+			<div id="ub-code-form" class="hidden">
+				<p class="ub-hint" id="ub-code-hint"></p>
+				<div class="ub-field">
+					<label>短信验证码</label>
+					<input class="ub-code" id="ub-code" inputmode="numeric" maxlength="8" autocomplete="one-time-code">
+				</div>
+				<div class="ub-actions">
+					<button class="ub-btn primary" id="ub-code-submit">验证并查询</button>
+					<button class="ub-btn" id="ub-code-back">返回</button>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<div id="ub-token-mask" class="ub-modal-mask hidden" role="dialog" aria-modal="true" aria-labelledby="ub-token-title">
+		<div class="ub-modal">
+			<div class="ub-modal-head">
+				<b id="ub-token-title">导出 ecs_token</b>
+				<button class="ub-btn" id="ub-token-close" aria-label="关闭">关闭</button>
+			</div>
+			<p class="ub-hint">点击导出按钮时已尝试自动复制。Token 等同登录凭证，请勿发送给他人；在另一台设备完成 Token 登录后建议删除导出的文件。</p>
+			<div class="ub-field">
+				<label for="ub-token-value">ecs_token</label>
+				<textarea class="ub-token-value" id="ub-token-value" readonly spellcheck="false"></textarea>
+			</div>
+			<p class="ub-hint ub-token-meta" id="ub-token-meta"></p>
+			<div class="ub-actions">
+				<button class="ub-btn primary" id="ub-token-copy">再次复制</button>
+				<button class="ub-btn" id="ub-token-reveal">显示 Token</button>
+				<button class="ub-btn" id="ub-token-download">下载 TXT</button>
+			</div>
+		</div>
+	</div>
+
+	<div id="ub-verify-mask" class="ub-modal-mask hidden" role="dialog" aria-modal="true">
+		<div>
+			<iframe id="ub-verify-frame" class="ub-verify-frame" title="联通安全验证"></iframe>
+			<div class="ub-actions" style="justify-content:flex-end;margin-top:8px">
+				<button class="ub-btn" id="ub-verify-cancel">取消验证</button>
+			</div>
+		</div>
+	</div>
+</div>
+
+<script>
+(function () {
+	'use strict';
+	var apiUrl = '<%=luci.dispatcher.build_url("admin/services/ufi_usage/api")%>';
+	var csrf = '<%=luci.dispatcher.context.authtoken or ""%>';
+	var state = null;
+	var busy = false;
+	var pendingMobileId = '';
+	var pendingUnicomId = '';
+	var qrPollTimer = null;
+	var smsCountdownTimer = null;
+	var smsCountdownRemaining = 0;
+	var unicomLoginMode = 'sms';
+	var autoRefreshTimer = null;
+	var refreshingAccountId = '';
+	var toastTimer = null;
+	var root = document.getElementById('ub-root');
+	var loading = document.getElementById('ub-loading');
+	var addMask = document.getElementById('ub-add-mask');
+	var tokenMask = document.getElementById('ub-token-mask');
+	var tokenValue = document.getElementById('ub-token-value');
+	var tokenMeta = document.getElementById('ub-token-meta');
+	var tokenReveal = document.getElementById('ub-token-reveal');
+	var verifyMask = document.getElementById('ub-verify-mask');
+	var verifyFrame = document.getElementById('ub-verify-frame');
+	var verificationCleanup = null;
+	var exportedToken = '';
+	var exportedTokenVisible = false;
+
+	function esc(value) {
+		return String(value == null ? '' : value)
+			.replace(/&/g, '&amp;')
+			.replace(/</g, '&lt;')
+			.replace(/>/g, '&gt;')
+			.replace(/"/g, '&quot;')
+			.replace(/'/g, '&#39;');
+	}
+	function attr(value) { return esc(value); }
+	function icon(name, spinning) {
+		var paths = {
+			refresh: '<path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/>',
+			phone: '<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.8 2.1z"/>',
+			download: '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/>',
+			edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+			trash: '<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5M14 11v5"/>'
+		};
+		if (name === 'refresh' && spinning) {
+			return '<span class="ub-refresh-ring" aria-hidden="true"></span>';
+		}
+		return '<svg class="ub-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (paths[name] || '') + '</svg>';
+	}
+	function num(value, digits) {
+		if (value === null || value === undefined || value === '') return '—';
+		var n = Number(value);
+		if (!isFinite(n)) return esc(value);
+		return n.toFixed(digits == null ? 2 : digits).replace(/\.?0+$/, '');
+	}
+	function money(value) {
+		if (value === null || value === undefined) return '—';
+		return num(value, 2);
+	}
+	function dateText(ts) {
+		if (!ts) return '尚未刷新';
+		var date = new Date(Number(ts) * 1000);
+		return date.toLocaleString();
+	}
+	function providerLetter(provider) {
+		return ({ mobile: '移', unicom: '联', cloud: '云', xj: '鲸' })[provider] || '卡';
+	}
+	async function copyText(value) {
+		try {
+			if (navigator.clipboard && window.isSecureContext) {
+				await navigator.clipboard.writeText(value);
+				return true;
+			}
+		} catch (error) {}
+		var input = document.createElement('textarea');
+		input.value = value;
+		input.setAttribute('readonly', '');
+		input.style.position = 'fixed';
+		input.style.left = '-9999px';
+		input.style.opacity = '0';
+		document.body.appendChild(input);
+		input.select();
+		input.setSelectionRange(0, input.value.length);
+		var copied = false;
+		try { copied = document.execCommand('copy'); } catch (error) {}
+		input.remove();
+		return copied;
+	}
+	function setTokenVisibility(visible) {
+		exportedTokenVisible = !!visible;
+		tokenValue.value = exportedTokenVisible ? exportedToken : '••••••••••••••••••••••••••••••••';
+		tokenReveal.textContent = exportedTokenVisible ? '隐藏 Token' : '显示 Token';
+	}
+	function closeTokenExport() {
+		exportedToken = '';
+		exportedTokenVisible = false;
+		tokenValue.value = '';
+		tokenMeta.textContent = '';
+		tokenMask.classList.add('hidden');
+	}
+	function toast(message, error) {
+		var old = document.getElementById('ub-toast');
+		if (old) old.remove();
+		var node = document.createElement('div');
+		node.id = 'ub-toast';
+		node.className = 'ub-toast' + (error ? ' error' : '');
+		node.textContent = message;
+		document.getElementById('ufi-usage-app').appendChild(node);
+		clearTimeout(toastTimer);
+		toastTimer = setTimeout(function () { node.remove(); }, 4200);
+	}
+	async function api(action, payload) {
+		if (busy) throw new Error('正在处理上一项操作');
+		busy = true;
+		try {
+			var response = await fetch(apiUrl + '?token=' + encodeURIComponent(csrf), {
+				method: 'POST',
+				credentials: 'same-origin',
+				headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrf},
+				body: JSON.stringify(Object.assign({action: action}, payload || {}))
+			});
+			var data;
+			try { data = await response.json(); }
+			catch (error) { throw new Error('LuCI 后端返回格式异常'); }
+			if (!response.ok || !data.ok) throw new Error(data.error || ('请求失败（HTTP ' + response.status + '）'));
+			return data;
+		} finally {
+			busy = false;
+		}
+	}
+	async function load(accountId) {
+		loading.classList.remove('hidden');
+		root.classList.add('hidden');
+		try {
+			state = await api('bootstrap', accountId ? {account_id: accountId} : {});
+			render();
+			loading.classList.add('hidden');
+			root.classList.remove('hidden');
+			scheduleAutoRefresh();
+		} catch (error) {
+			loading.textContent = error.message;
+		}
+	}
+	function stopAutoRefresh() {
+		if (autoRefreshTimer) clearTimeout(autoRefreshTimer);
+		autoRefreshTimer = null;
+	}
+	function scheduleAutoRefresh() {
+		stopAutoRefresh();
+		if (!state || !state.active_account) return;
+		autoRefreshTimer = setTimeout(async function () {
+			if (
+				document.visibilityState === 'visible'
+				&& !busy
+				&& addMask.classList.contains('hidden')
+			) {
+				await refresh(state.active_account, {auto: true, silent: true});
+			} else {
+				scheduleAutoRefresh();
+			}
+		}, 60000);
+	}
+	function flowRow(label, used, total, remain, unlimited, regional) {
+		var pct = unlimited ? 100 : Math.max(0, Math.min(100, Number(total) > 0 ? Number(used) / Number(total) * 100 : 0));
+		return '<div class="ub-flow-row">' +
+			'<div class="ub-flow-head"><b>' + esc(label) + '</b>' +
+			'<div class="ub-flow-value"><strong>' + (unlimited ? '不限量' : '剩余 ' + num(remain) + ' GB') + '</strong>' +
+			'<small>' + (unlimited ? '已用 ' + num(used) + ' GB' : '已用 ' + num(used) + ' / 共 ' + num(total) + ' GB · ' + pct.toFixed(0) + '%') + '</small></div></div>' +
+			'<div class="ub-bar' + (regional ? ' regional' : '') + '" role="progressbar" aria-valuenow="' + pct.toFixed(0) + '" aria-valuemin="0" aria-valuemax="100"><i style="width:' + pct.toFixed(1) + '%"></i></div></div>';
+	}
+	function packageKindLabel(kind) {
+		return ({ general: '通用', directed: '定向', regional: '区域' })[kind] || '流量';
+	}
+	function renderPackageCards(items) {
+		var packages = (items || []).slice().sort(function (first, second) {
+			return Number(!!second.unlimited) - Number(!!first.unlimited);
+		});
+		var html = packages.map(function (item) {
+			var unlimited = !!item.unlimited;
+			var remaining = Number(item.remaining_gb || 0);
+			var total = Number(item.total_gb || 0);
+			var used = item.used_gb === null || item.used_gb === undefined
+				? Math.max(0, total - remaining)
+				: Number(item.used_gb || 0);
+			if (!total) total = used + remaining;
+			var percent = unlimited ? 100 : total > 0 ? Math.max(0, Math.min(100, used / total * 100)) : 0;
+			var badges = '<span class="ub-badge">' + esc(packageKindLabel(item.kind)) + '</span>';
+			if (unlimited) badges += '<span class="ub-badge unlimited">无限量</span>';
+			if (item.sharing === 'shared') badges += '<span class="ub-badge shared">共享</span>';
+			else if (item.sharing === 'unshared') badges += '<span class="ub-badge">非共享</span>';
+			return '<article class="ub-package' + (unlimited ? ' unlimited' : '') + '">' +
+				'<div class="ub-package-head"><div class="ub-package-name">' + esc(item.name || '流量包') + '</div>' +
+				'<div class="ub-package-badges">' + badges + '</div></div>' +
+				'<div class="ub-package-main"><div><div class="ub-label">剩余量</div><b>' + (unlimited ? '∞' : num(remaining)) + '</b>' +
+				'<small>' + (unlimited ? ' GB · 不限量' : ' GB') + '</small></div>' +
+				'<div class="ub-expiry">' + (item.valid_to ? '至 ' + esc(String(item.valid_to).replace('T', ' ').slice(0, 16)) : '未标到期') + '</div></div>' +
+				'<div class="ub-bar' + (unlimited ? ' unlimited' : '') + '" role="progressbar" aria-valuenow="' + percent.toFixed(0) + '" aria-valuemin="0" aria-valuemax="100"><i style="width:' + percent.toFixed(1) + '%"></i></div>' +
+				'<div class="ub-package-used"><span>已用 ' + num(used) + ' GB</span><span>总量 ' + (unlimited ? '∞' : num(total) + ' GB') + '</span></div></article>';
+		}).join('');
+		return '<div class="ub-packages">' + html + '</div>';
+	}
+	function renderAccountList() {
+		if (!state.accounts.length) return '<div class="ub-empty">还没有余量账号</div>';
+		return state.accounts.map(function (account) {
+			return '<button class="ub-account' + (account.id === state.active_account ? ' active' : '') + '" data-select-account="' + attr(account.id) + '">' +
+				'<span class="ub-avatar">' + esc(providerLetter(account.provider)) + '</span>' +
+				'<span class="ub-account-main"><span class="ub-account-name">' + esc(account.label || account.provider_name) + '</span>' +
+				'<span class="ub-account-sub">' + esc(account.provider_name) + ' · ' + esc(account.identity_masked || '待识别') + '</span></span>' +
+				'<span class="ub-dot' + (account.ready ? ' ready' : '') + '" title="' + (account.ready ? '会话已保存' : '需要登录') + '"></span>' +
+				'</button>';
+		}).join('');
+	}
+	function renderUsage() {
+		var account = state.active_account_meta;
+		var usage = state.usage;
+		if (!account) {
+			return '<section class="ub-card ub-cta"><h3>开始配置余量</h3>' +
+				'<p>支持中国移动短信登录、中国联通短信验证码（服务密码登录视联通限制而定）或扫码、云上卡和小鲸卡充值号查询。' +
+				'不保存手机号密码或联通服务密码；保存的会话使用本机密钥加密。</p>' +
+				'<button class="ub-btn primary" data-add>添加第一个账号</button></section>';
+		}
+		if (!usage) {
+			var isUnicom = account.provider === 'unicom';
+			return '<section class="ub-card ub-cta"><h3>' + esc(account.provider_name) + '尚未登录</h3>' +
+				'<p>' + (account.last_error ? esc(account.last_error) : (isUnicom ? '请使用短信验证码、服务密码或联通 App 扫码完成登录。' : '请重新登录以读取余量。')) + '</p>' +
+				'<div class="ub-actions" style="justify-content:center">' +
+				'<button class="ub-btn primary" data-readd="' + attr(account.provider) + '">重新登录</button>' +
+				(account.provider === 'mobile' || account.provider === 'unicom' ? '<button class="ub-btn" data-bind="' + attr(account.id) + '">修改手机号</button>' : '') +
+				'<button class="ub-btn danger" data-delete="' + attr(account.id) + '">删除账号</button></div></section>';
+		}
+		var flow = usage.flow || {};
+		var cloud = usage.cloud_card || {};
+		var flowHtml = '';
+		if (cloud.provider_id) {
+			flowHtml += flowRow('流量', flow.general_used_gb, flow.general_total_gb, flow.general_remaining_gb, flow.general_unlimited, false);
+		} else {
+			flowHtml += flowRow('通用', flow.general_used_gb, flow.general_total_gb, flow.general_remaining_gb, !!flow.general_unlimited, false);
+			flowHtml += flowRow('定向', flow.directed_used_gb, flow.directed_total_gb, flow.directed_remaining_gb, !!flow.directed_unlimited, false);
+			if (flow.regional_remaining_gb !== null && flow.regional_remaining_gb !== undefined) {
+				flowHtml += flowRow('区域', flow.regional_used_gb, flow.regional_total_gb, flow.regional_remaining_gb, !!flow.regional_unlimited, true);
+			}
+		}
+		var packages = renderPackageCards(usage.packages || []);
+		var orders = (cloud.orders || []).map(function (item) {
+			return '<div class="ub-order"><div><div class="ub-order-name">' + esc(item.name) + '</div>' +
+				'<div class="ub-order-meta">' + esc([item.status_text, item.pay_type_text, item.created_at].filter(Boolean).join(' · ')) + '</div></div>' +
+				'<div class="ub-num">¥' + money(item.paid_yuan !== null ? item.paid_yuan : item.amount_yuan) + '</div></div>';
+		}).join('');
+		var facts = '';
+		if (usage.last_month_spend_yuan != null) facts += '<div class="ub-fact"><span class="ub-label">上月消费</span><b>¥' + money(usage.last_month_spend_yuan) + '</b></div>';
+		if (usage.current_spend_yuan != null) facts += '<div class="ub-fact"><span class="ub-label">本期消费</span><b>¥' + money(usage.current_spend_yuan) + '</b></div>';
+		if (usage.points !== null && usage.points !== undefined) facts += '<div class="ub-fact"><span class="ub-label">积分</span><b>' + esc(usage.points) + '</b></div>';
+		if (usage.monthly_used_gb !== null && usage.monthly_used_gb !== undefined) facts += '<div class="ub-fact"><span class="ub-label">本月累计</span><b>' + num(usage.monthly_used_gb) + ' GB</b></div>';
+		if (usage.voice) facts += '<div class="ub-fact"><span class="ub-label">语音剩余</span><b>' + num(usage.voice.remaining, 1) + ' 分钟</b></div>';
+		if (usage.sms_usage) facts += '<div class="ub-fact"><span class="ub-label">短信剩余</span><b>' + num(usage.sms_usage.remaining, 1) + ' 条</b></div>';
+		if (usage.tenure_months !== null && usage.tenure_months !== undefined) facts += '<div class="ub-fact"><span class="ub-label">网龄</span><b>' + Math.floor(usage.tenure_months / 12) + '年' + (usage.tenure_months % 12) + '月</b></div>';
+		var warnings = (usage.warnings || []).length ?
+			'<section class="ub-card ub-warnings"><b>部分数据未完整读取</b><ul>' +
+			usage.warnings.map(function (item) { return '<li>' + esc(item) + '</li>'; }).join('') + '</ul></section>' : '';
+		var cloudMeta = cloud.provider_id ?
+			'<div class="ub-facts">' +
+			(cloud.status_text ? '<div class="ub-fact"><span class="ub-label">卡状态</span><b>' + esc(cloud.status_text) + '</b></div>' : '') +
+			(cloud.days_left !== null && cloud.days_left !== undefined ? '<div class="ub-fact"><span class="ub-label">剩余天数</span><b>' + esc(cloud.days_left) + ' 天</b></div>' : '') +
+			(cloud.real_name_text ? '<div class="ub-fact"><span class="ub-label">实名</span><b>' + esc(cloud.real_name_text) + '</b></div>' : '') +
+			(cloud.series_name ? '<div class="ub-fact"><span class="ub-label">系列</span><b>' + esc(cloud.series_name) + '</b></div>' : '') +
+			(cloud.real_remaining_gb !== null && cloud.real_remaining_gb !== undefined ? '<div class="ub-fact"><span class="ub-label">真实剩余</span><b>' + num(cloud.real_remaining_gb) + ' GB</b></div>' : '') +
+			'</div>' +
+			(cloud.iccid ? '<div class="ub-sub" style="margin-top:8px">ICCID ' + esc(cloud.iccid) + '</div>' : '') : '';
+		var autoPanel = account.provider === 'mobile' ? renderAuto(account) : '';
+		var refreshing = refreshingAccountId === account.id;
+		var staleHtml = account.last_error
+			? '<div class="ub-stale"><b>数据可能已过期</b><span>' + esc(account.last_error) + '</span>' +
+				'<span>最后成功更新：' + esc(dateText(account.last_ok_at || account.cached_at)) + '</span></div>'
+			: '';
+		return '<div class="ub-simbar"><span class="ub-pill ' + (state.sim.carrier ? 'good' : 'warn') + '">' +
+			esc(state.sim.carrier_name || 'SIM 未就绪') + '</span>' +
+			(state.sim.phone_masked ? '<span>当前 SIM ' + esc(state.sim.phone_masked) + '</span>' : '') +
+			(state.sim.plmn ? '<span class="ub-muted">PLMN ' + esc(state.sim.plmn) + '</span>' : '') +
+			(state.sim.reason ? '<span class="ub-muted">' + esc(state.sim.reason) + '</span>' : '') + '</div>' +
+			staleHtml +
+			'<section class="ub-panel ub-hero"><div class="ub-hero-top"><div><div class="ub-label">可用余额</div>' +
+			'<div class="ub-balance"><small>¥</small>' + money(usage.balance_yuan) + '</div>' +
+			'<div class="ub-who"><b>' + esc(account.provider_name) + '</b> · ' + esc(usage.phone_masked || account.identity_masked) +
+			(usage.owner_name ? ' · 机主 ' + esc(usage.owner_name) : '') + '</div></div>' +
+			'<div class="ub-plan"><div class="ub-label">当前套餐</div><div class="ub-plan-name">' + esc(usage.plan_name || '未返回套餐名称') + '</div>' +
+			(cloud.expires_at ? '<div class="ub-sub">到期 ' + esc(cloud.expires_at) + '</div>' : '') + '</div></div>' +
+			(facts ? '<div class="ub-facts">' + facts + '</div>' : '') + cloudMeta +
+			'<div class="ub-card-title" style="margin-top:15px"><b>流量余量</b><span class="ub-actions">' +
+			'<button class="ub-btn ub-action-btn" data-refresh="' + attr(account.id) + '" title="' + (refreshing ? '刷新中…' : '刷新余量') + '" aria-label="' + (refreshing ? '刷新中…' : '刷新余量') + '" aria-busy="' + (refreshing ? 'true' : 'false') + '"' + (refreshing ? ' disabled' : '') + '>' +
+				icon('refresh', refreshing) + '</button>' +
+			(account.provider === 'mobile' || account.provider === 'unicom' ? '<button class="ub-btn ub-action-btn" data-bind="' + attr(account.id) + '" title="修改手机号" aria-label="修改手机号">' + icon('phone') + '</button>' : '') +
+			(account.provider === 'unicom' ? '<button class="ub-btn ub-action-btn" data-export-token="' + attr(account.id) + '" title="导出 ecs_token" aria-label="导出 ecs_token">' + icon('download') + '</button>' : '') +
+			'<button class="ub-btn ub-action-btn" data-rename="' + attr(account.id) + '" title="修改账号名称" aria-label="修改账号名称">' + icon('edit') + '</button>' +
+			'<button class="ub-btn ub-action-btn danger" data-delete="' + attr(account.id) + '" title="删除账号" aria-label="删除账号">' + icon('trash') + '</button></span></div>' +
+			'<div class="ub-flow">' + flowHtml + '</div></section>' +
+			((usage.packages || []).length ? '<section class="ub-card"><div class="ub-card-title"><b>套餐与流量包</b><span class="ub-label">' + usage.packages.length + ' 项</span></div>' + packages + '</section>' : '') +
+			(orders ? '<section class="ub-card"><div class="ub-card-title"><b>订单记录</b></div><div class="ub-orders">' + orders + '</div></section>' : '') +
+			autoPanel + warnings +
+			'<div class="ub-cache">最后成功更新：' + esc(dateText(account.last_ok_at || account.cached_at)) + '</div>';
+	}
+	function renderAuto(account) {
+		var auto = state.auto || {};
+		var supported = state.sim.supported_auto_login && state.auto_can_match;
+		var note = !state.sim.supported_auto_login ? (state.sim.reason || '当前 SIM 不支持自动登录') :
+			(!state.auto_can_match ? '当前 SIM 与这个移动账号不一致，不能自动读取验证码' :
+			'仅在当前移动 SIM 与账号号码完全一致时读取 10086 新短信；发码有冷却和每日额度。');
+		return '<section class="ub-card"><div class="ub-card-title"><b>移动自动登录</b>' +
+			'<span class="ub-pill ' + (supported ? 'good' : 'warn') + '">' + (supported ? '可配置' : '当前不可用') + '</span></div>' +
+			'<div class="ub-auto-note">' + esc(note) + '</div>' +
+			'<div class="ub-field"><label style="display:flex;align-items:center;gap:7px"><input id="ub-auto-enabled" type="checkbox" style="width:auto"' +
+			(auto.enabled ? ' checked' : '') + '>启用设备级自动登录</label></div>' +
+			'<div class="ub-field"><label style="display:flex;align-items:center;gap:7px"><input id="ub-auto-participate" type="checkbox" style="width:auto"' +
+			(account.auto_enabled ? ' checked' : '') + (supported ? '' : ' disabled') + '>让此移动账号参与自动登录</label></div>' +
+			'<div class="ub-auto-grid"><div class="ub-field"><label>检查间隔（分钟）</label><input id="ub-auto-check" type="number" min="5" max="1440" value="' + attr(auto.check_interval_minutes || 30) + '"></div>' +
+			'<div class="ub-field"><label>主动重登间隔（分钟）</label><input id="ub-auto-relogin" type="number" min="30" max="1440" value="' + attr(auto.relogin_interval_minutes || 360) + '"></div>' +
+			'<div class="ub-field"><label>每日短信上限</label><input id="ub-auto-limit" type="number" min="1" max="10" value="' + attr(auto.daily_sms_limit || 3) + '"></div></div>' +
+			'<div class="ub-actions"><button class="ub-btn primary" data-auto-save="' + attr(account.id) + '"' + (supported ? '' : ' disabled') + '>保存自动登录</button>' +
+			'<button class="ub-btn" data-auto-now="' + attr(account.id) + '"' + (supported ? '' : ' disabled') + '>立即检查并按需登录</button></div></section>';
+	}
+	function render() {
+		root.innerHTML = '<div class="ub-layout"><aside class="ub-side ub-panel">' +
+			'<div class="ub-side-head"><b>余量账号</b><span class="ub-muted">' + state.accounts.length + ' 个</span></div>' +
+			'<div class="ub-account-list">' + renderAccountList() + '</div>' +
+			'<button class="ub-btn ub-side-add" data-add>＋ 添加账号</button></aside>' +
+			'<main class="ub-main">' + renderUsage() + '</main></div>' +
+			'<div class="ub-foot"><span>协议与余量语义参考 <a href="https://github.com/Asunano/UFI-AXIS" target="_blank" rel="noopener noreferrer">UFI-AXIS</a> / <a href="https://github.com/AliYa-chen/unicomvue" target="_blank" rel="noopener noreferrer">unicomvue</a>（MIT）</span><span>插件 v' + esc(state.version) + '</span></div>';
+	}
+	function showAdd(provider) {
+		addMask.classList.remove('hidden');
+		document.getElementById('ub-add-form').classList.remove('hidden');
+		document.getElementById('ub-code-form').classList.add('hidden');
+		if (provider) {
+			var radio = document.querySelector('input[name="ub-provider"][value="' + provider + '"]');
+			if (radio) radio.checked = true;
+		}
+		resetUnicomLogin();
+		updateAddForm();
+	}
+	function hideAdd() {
+		stopQrPoll();
+		stopSmsCountdown();
+		if (verificationCleanup) verificationCleanup();
+		addMask.classList.add('hidden');
+	}
+	function selectedProvider() {
+		return (document.querySelector('input[name="ub-provider"]:checked') || {}).value || 'mobile';
+	}
+	function validPhone(value) {
+		return /^1[3-9]\d{9}$/.test(String(value || '').trim());
+	}
+	function stopSmsCountdown() {
+		if (smsCountdownTimer) clearInterval(smsCountdownTimer);
+		smsCountdownTimer = null;
+		smsCountdownRemaining = 0;
+		updateUnicomControls();
+	}
+	function updateUnicomControls() {
+		var sendButton = document.getElementById('ub-unicom-send');
+		var phone = document.getElementById('ub-unicom-phone').value;
+		var code = document.getElementById('ub-unicom-code').value.trim();
+		var token = document.getElementById('ub-unicom-token').value.trim();
+		var tokenPhone = document.getElementById('ub-unicom-token-phone').value.trim();
+		var qrPhone = document.getElementById('ub-unicom-qr-phone').value.trim();
+		sendButton.disabled = busy || smsCountdownRemaining > 0 || !validPhone(phone);
+		sendButton.textContent = smsCountdownRemaining > 0 ? smsCountdownRemaining + ' 秒后重发' : '发送验证码';
+		document.getElementById('ub-unicom-verify').disabled = busy || !pendingUnicomId || !code;
+		document.getElementById('ub-unicom-token-login').disabled = busy || token.length <= 20 || (!!tokenPhone && !validPhone(tokenPhone));
+		document.getElementById('ub-unicom-qr-start').disabled = busy || (!!qrPhone && !validPhone(qrPhone));
+	}
+	function startSmsCountdown() {
+		if (smsCountdownTimer) clearInterval(smsCountdownTimer);
+		smsCountdownRemaining = 60;
+		updateUnicomControls();
+		smsCountdownTimer = setInterval(function () {
+			smsCountdownRemaining = Math.max(0, smsCountdownRemaining - 1);
+			if (smsCountdownRemaining === 0) {
+				clearInterval(smsCountdownTimer);
+				smsCountdownTimer = null;
+			}
+			updateUnicomControls();
+		}, 1000);
+	}
+	function setUnicomMode(mode) {
+		unicomLoginMode = mode === 'token' || mode === 'qr' ? mode : 'sms';
+		document.querySelectorAll('[data-unicom-tab]').forEach(function (button) {
+			var active = button.getAttribute('data-unicom-tab') === unicomLoginMode;
+			button.classList.toggle('active', active);
+			button.setAttribute('aria-selected', active ? 'true' : 'false');
+		});
+		document.getElementById('ub-unicom-sms-pane').classList.toggle('hidden', unicomLoginMode !== 'sms');
+		document.getElementById('ub-unicom-token-pane').classList.toggle('hidden', unicomLoginMode !== 'token');
+		document.getElementById('ub-unicom-qr-pane').classList.toggle('hidden', unicomLoginMode !== 'qr');
+		if (unicomLoginMode !== 'qr') stopQrPoll();
+		updateUnicomControls();
+	}
+	function resetUnicomLogin() {
+		stopSmsCountdown();
+		stopQrPoll();
+		pendingUnicomId = '';
+		document.getElementById('ub-unicom-phone').value = '';
+		document.getElementById('ub-unicom-code').value = '';
+		document.getElementById('ub-unicom-token-phone').value = '';
+		document.getElementById('ub-unicom-token').value = '';
+		document.getElementById('ub-unicom-qr-phone').value = '';
+		document.getElementById('ub-unicom-qr-content').classList.add('hidden');
+		document.getElementById('ub-qr-image').removeAttribute('src');
+		document.getElementById('ub-unicom-sms-hint').textContent = '先发送验证码；遇到安全验证时会打开联通官方验证页。';
+		setUnicomMode('sms');
+	}
+	function updateAddForm() {
+		var provider = selectedProvider();
+		var identityLabel = document.getElementById('ub-identity-label');
+		var verifyField = document.getElementById('ub-verify-field');
+		var hint = document.getElementById('ub-add-hint');
+		var isUnicom = provider === 'unicom';
+		verifyField.classList.toggle('hidden', provider !== 'xj');
+		document.getElementById('ub-generic-fields').classList.toggle('hidden', isUnicom);
+		document.getElementById('ub-unicom-panel').classList.toggle('hidden', !isUnicom);
+		document.getElementById('ub-add-submit').classList.toggle('hidden', isUnicom);
+		if (provider === 'cloud' || provider === 'xj') {
+			identityLabel.textContent = '充值号（卡号）';
+			document.getElementById('ub-identity').setAttribute('placeholder', '物联卡充值号');
+			hint.textContent = provider === 'xj' ? '小鲸卡需要同时填写绑定手机号的后四位。' : '云上卡只需充值号，不保存充值号明文，会话已加密。';
+		} else if (provider === 'mobile') {
+			identityLabel.textContent = '11 位手机号';
+			document.getElementById('ub-identity').setAttribute('placeholder', '手机号');
+			hint.textContent = '会向该号码发送真实验证码。登录成功后保存加密会话。';
+		} else {
+			hint.textContent = '短信验证码是主登录方式；Token 可用于恢复已有会话，安全验证失败时可改用扫码。';
+		}
+		document.getElementById('ub-add-submit').textContent = provider === 'mobile' ? '发送验证码' :
+			provider === 'cloud' || provider === 'xj' ? '登录并查询' : '继续';
+		updateUnicomControls();
+	}
+	function runUnicomVerification(accountId, verification, resumeAction) {
+		return new Promise(function (resolve, reject) {
+			if (!verification || !verification.url || !verification.id || !verification.context) {
+				reject(new Error('联通安全验证信息不完整'));
+				return;
+			}
+			var origin = 'https://img.client.10010.com';
+			var settled = false;
+			var timer = setTimeout(function () {
+				finish(new Error('联通安全验证超时，请重新开始'));
+			}, 300000);
+			function finish(error, value) {
+				if (settled) return;
+				settled = true;
+				clearTimeout(timer);
+				window.removeEventListener('message', onMessage);
+				verifyMask.classList.add('hidden');
+				verifyFrame.removeAttribute('src');
+				verificationCleanup = null;
+				if (error) reject(error); else resolve(value);
+			}
+			async function onMessage(event) {
+				if (
+					event.origin !== origin ||
+					event.source !== verifyFrame.contentWindow ||
+					!event.data || typeof event.data !== 'object'
+				) return;
+				if (event.data.code === 'myLoad') {
+					verifyFrame.contentWindow.postMessage(verification.context, origin);
+					return;
+				}
+				if (event.data.code === '0001') {
+					finish(new Error('已取消联通安全验证'));
+					return;
+				}
+				if (event.data.code !== '0000' || typeof event.data.resultToken !== 'string') return;
+				try {
+					var result = await api(resumeAction, {
+						account_id: accountId,
+						verification_id: verification.id,
+						result_token: event.data.resultToken
+					});
+					finish(null, result);
+				} catch (error) {
+					finish(error);
+				}
+			}
+			verificationCleanup = function () {
+				finish(new Error('已取消联通安全验证'));
+			};
+			window.addEventListener('message', onMessage);
+			verifyMask.classList.remove('hidden');
+			verifyFrame.src = verification.url;
+		});
+	}
+	async function submitAdd() {
+		var provider = selectedProvider();
+		var identity = document.getElementById('ub-identity').value.trim();
+		var label = document.getElementById('ub-label').value.trim();
+		var verify = document.getElementById('ub-verify').value.trim();
+		try {
+			var result;
+			if (provider === 'mobile') {
+				result = await api('mobile_send_code', {phone: identity, label: label});
+				pendingMobileId = result.account.id;
+				document.getElementById('ub-add-form').classList.add('hidden');
+				document.getElementById('ub-code-form').classList.remove('hidden');
+				document.getElementById('ub-code-hint').textContent = result.message + ' 票据 5 分钟内有效。';
+				document.getElementById('ub-code').value = '';
+				document.getElementById('ub-code').focus();
+			} else if (provider === 'cloud' || provider === 'xj') {
+				result = await api('cloud_login', {provider: provider, card_no: identity, verify: verify, label: label});
+				toast(result.message || '登录成功');
+				hideAdd();
+				await load(result.account.id);
+			}
+		} catch (error) { toast(error.message, true); }
+	}
+	async function sendUnicomSms() {
+		var phone = document.getElementById('ub-unicom-phone').value.trim();
+		var label = document.getElementById('ub-label').value.trim();
+		var hint = document.getElementById('ub-unicom-sms-hint');
+		if (!validPhone(phone)) { toast('请输入正确的 11 位联通手机号', true); return; }
+		if (smsCountdownRemaining > 0 || busy) return;
+		hint.textContent = '正在请求短信验证码…';
+		updateUnicomControls();
+		try {
+			var result = await api('unicom_send_sms', {phone: phone, label: label});
+			if (result.verification) {
+				hint.textContent = '需要完成联通安全验证，验证通过后会继续发送短信。';
+				result = await runUnicomVerification(result.account.id, result.verification, 'unicom_resume_sms_send');
+			}
+			pendingUnicomId = result.account.id;
+			document.getElementById('ub-unicom-code').value = '';
+			hint.textContent = (result.message || '验证码已发送') + '，验证码 5 分钟内有效。';
+			startSmsCountdown();
+			document.getElementById('ub-unicom-code').focus();
+		} catch (error) {
+			hint.textContent = error.message;
+			toast(error.message, true);
+			if (/扫码/.test(error.message || '')) setUnicomMode('qr');
+		} finally {
+			updateUnicomControls();
+		}
+	}
+	async function verifyUnicomSms() {
+		var code = document.getElementById('ub-unicom-code').value.trim();
+		if (!pendingUnicomId || !code) return;
+		try {
+			var result = await api('unicom_verify_sms', {account_id: pendingUnicomId, code: code});
+			toast(result.message || '登录成功');
+			stopSmsCountdown();
+			hideAdd();
+			await load(pendingUnicomId);
+		} catch (error) {
+			document.getElementById('ub-unicom-sms-hint').textContent = error.message;
+			toast(error.message, true);
+		}
+	}
+	async function unicomTokenLogin() {
+		var phone = document.getElementById('ub-unicom-token-phone').value.trim();
+		var token = document.getElementById('ub-unicom-token').value.trim();
+		var label = document.getElementById('ub-label').value.trim();
+		try {
+			var result = await api('unicom_token_login', {phone: phone, token: token, label: label});
+			toast(result.message || 'Token 登录成功');
+			hideAdd();
+			await load(result.account.id);
+		} catch (error) { toast(error.message, true); }
+	}
+	async function exportUnicomToken(accountId) {
+		try {
+			var result = await api('unicom_export_token', {account_id: accountId});
+			exportedToken = result.token || '';
+			tokenMeta.textContent = [
+				result.label || '联通账号',
+				result.phone_masked,
+				result.mode === 'sms' ? '短信登录会话' :
+					result.mode === 'token' ? 'Token 登录会话' :
+					result.mode ? '联通登录会话' : ''
+			].filter(Boolean).join(' · ');
+			setTokenVisibility(false);
+			tokenMask.classList.remove('hidden');
+			var copied = await copyText(exportedToken);
+			toast(copied ? 'ecs_token 已复制，可迁移到另一台设备' : 'ecs_token 已生成，请点击“再次复制”', !copied);
+		} catch (error) { toast(error.message, true); }
+	}
+	async function copyExportedToken() {
+		if (!exportedToken) return;
+		var copied = await copyText(exportedToken);
+		toast(copied ? 'ecs_token 已复制' : '浏览器拒绝了自动复制，请显示后手动复制', !copied);
+	}
+	function downloadExportedToken() {
+		if (!exportedToken) return;
+		var blob = new Blob([exportedToken], {type: 'text/plain;charset=utf-8'});
+		var url = URL.createObjectURL(blob);
+		var link = document.createElement('a');
+		link.href = url;
+		link.download = 'unicom-ecs-token.txt';
+		document.body.appendChild(link);
+		link.click();
+		link.remove();
+		window.setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+		toast('Token 文件已下载');
+	}
+	async function unicomPasswordLogin() {
+		var identity = document.getElementById('ub-unicom-phone').value.trim();
+		var label = document.getElementById('ub-label').value.trim();
+		var password = document.getElementById('ub-password').value;
+		try {
+			var result = await api('unicom_password_login', {
+				phone: identity,
+				password: password,
+				label: label
+			});
+			toast(result.message || '登录成功');
+			hideAdd();
+			await load(result.account.id);
+		} catch (error) { toast(error.message, true); }
+	}
+	async function verifyMobile() {
+		try {
+			var code = document.getElementById('ub-code').value;
+			var result = await api('mobile_verify_code', {account_id: pendingMobileId, code: code});
+			toast(result.message || '登录成功');
+			hideAdd();
+			await load(pendingMobileId);
+		} catch (error) { toast(error.message, true); }
+	}
+	async function startQr() {
+		try {
+			var phone = document.getElementById('ub-unicom-qr-phone').value.trim();
+			var label = document.getElementById('ub-label').value.trim();
+			var result = await api('unicom_qr_start', {phone: phone, label: label});
+			document.getElementById('ub-unicom-qr-content').classList.remove('hidden');
+			document.getElementById('ub-qr-image').src = result.qr_data;
+			document.getElementById('ub-qr-status').textContent = result.message;
+			pollQr(result.account.id);
+		} catch (error) { toast(error.message, true); }
+	}
+	function stopQrPoll() {
+		if (qrPollTimer) clearInterval(qrPollTimer);
+		qrPollTimer = null;
+	}
+	function pollQr(accountId) {
+		stopQrPoll();
+		var deadline = Date.now() + 150000;
+		qrPollTimer = setInterval(async function () {
+			if (Date.now() > deadline) {
+				stopQrPoll();
+				document.getElementById('ub-qr-status').textContent = '二维码已过期，请关闭后重试。';
+				return;
+			}
+			try {
+				if (!busy) {
+					var result = await api('unicom_qr_poll', {account_id: accountId});
+					document.getElementById('ub-qr-status').textContent = result.message || '等待扫码';
+					if (result.state === 'ready') {
+						stopQrPoll();
+						toast(result.message || '扫码登录成功');
+						hideAdd();
+						await load(accountId);
+					}
+				}
+			} catch (error) {
+				stopQrPoll();
+				document.getElementById('ub-qr-status').textContent = error.message;
+			}
+		}, 2200);
+	}
+	async function refresh(accountId, options) {
+		options = options || {};
+		if (refreshingAccountId || busy) {
+			if (options.auto) scheduleAutoRefresh();
+			else if (busy) toast('正在处理上一项操作');
+			return;
+		}
+		stopAutoRefresh();
+		refreshingAccountId = accountId;
+		var spinStartedAt = Date.now();
+		render();
+		await new Promise(function (resolve) { window.requestAnimationFrame(resolve); });
+		try {
+			var result = await api('refresh', {account_id: accountId});
+			if (result.usage) state.usage = result.usage;
+			if (result.account) {
+				state.active_account_meta = result.account;
+				state.accounts = state.accounts.map(function (account) {
+					return account.id === result.account.id ? result.account : account;
+				});
+			}
+			state.stale = !!result.stale;
+			if (result.stale) {
+				if (!options.silent) toast(result.message || '数据可能已过期', true);
+			} else if (!options.silent) {
+				toast(result.message || '余量已刷新');
+			}
+		} catch (error) {
+			var message = error.message || '刷新失败';
+			if (state.active_account_meta && state.active_account_meta.id === accountId) {
+				state.active_account_meta.last_error = message;
+				state.accounts = state.accounts.map(function (account) {
+					if (account.id !== accountId) return account;
+					var updated = Object.assign({}, account);
+					updated.last_error = message;
+					return updated;
+				});
+			}
+			state.stale = true;
+			if (!options.silent) toast(message, true);
+		} finally {
+			var minimumSpin = options.auto ? 250 : 1200;
+			var spinRemaining = minimumSpin - (Date.now() - spinStartedAt);
+			if (spinRemaining > 0) {
+				await new Promise(function (resolve) { window.setTimeout(resolve, spinRemaining); });
+			}
+			refreshingAccountId = '';
+			render();
+			scheduleAutoRefresh();
+		}
+	}
+	async function rename(accountId) {
+		var current = state.active_account_meta && state.active_account_meta.label || '';
+		var label = window.prompt('新的账号备注', current);
+		if (label === null) return;
+		try {
+			await api('rename_account', {account_id: accountId, label: label});
+			toast('备注已更新');
+			await load(accountId);
+		} catch (error) { toast(error.message, true); }
+	}
+	async function bindIdentity(accountId) {
+		var account = state.active_account_meta || {};
+		var phone = window.prompt('修改这个' + (account.provider_name || '') + '账号的 11 位手机号', account.identity_masked || '');
+		if (phone === null) return;
+		try {
+			await api('update_identity', {account_id: accountId, phone: phone});
+			toast('手机号已更新');
+			await load(accountId);
+		} catch (error) { toast(error.message, true); }
+	}
+	async function removeAccount(accountId) {
+		if (!window.confirm('删除这个余量账号及其加密会话？此操作不会影响运营商账号。')) return;
+		try {
+			await api('delete_account', {account_id: accountId});
+			toast('账号已删除');
+			await load();
+		} catch (error) { toast(error.message, true); }
+	}
+	async function saveAuto(accountId) {
+		try {
+			var limitElement = document.getElementById('ub-auto-limit');
+			var reloginElement = document.getElementById('ub-auto-relogin');
+			var result = await api('set_auto', {
+				account_id: accountId,
+				auto: {
+					enabled: document.getElementById('ub-auto-enabled').checked,
+					participate: document.getElementById('ub-auto-participate').checked,
+					check_interval_minutes: Number(document.getElementById('ub-auto-check').value),
+					relogin_interval_minutes: reloginElement ? Number(reloginElement.value) : Number(state.auto.relogin_interval_minutes || 360),
+					daily_sms_limit: limitElement ? Number(limitElement.value) : 3
+				}
+			});
+			toast(result.message || '设置已保存');
+			await load(accountId);
+		} catch (error) { toast(error.message, true); }
+	}
+	async function autoNow(accountId) {
+		try {
+			var result = await api('auto_now', {account_id: accountId});
+			toast(result.message || '已排队');
+		} catch (error) { toast(error.message, true); }
+	}
+
+	document.getElementById('ub-add-top').addEventListener('click', function () { showAdd(); });
+	document.getElementById('ub-add-close').addEventListener('click', hideAdd);
+	document.getElementById('ub-add-mask').addEventListener('click', function (event) {
+		if (event.target === addMask) hideAdd();
+	});
+	document.getElementById('ub-verify-cancel').addEventListener('click', function () {
+		if (verificationCleanup) verificationCleanup();
+	});
+	document.getElementById('ub-token-close').addEventListener('click', closeTokenExport);
+	document.getElementById('ub-token-copy').addEventListener('click', copyExportedToken);
+	document.getElementById('ub-token-reveal').addEventListener('click', function () {
+		setTokenVisibility(!exportedTokenVisible);
+	});
+	document.getElementById('ub-token-download').addEventListener('click', downloadExportedToken);
+	tokenMask.addEventListener('click', function (event) {
+		if (event.target === tokenMask) closeTokenExport();
+	});
+	document.querySelectorAll('input[name="ub-provider"]').forEach(function (radio) {
+		radio.addEventListener('change', updateAddForm);
+	});
+	document.querySelectorAll('[data-unicom-tab]').forEach(function (button) {
+		button.addEventListener('click', function () {
+			setUnicomMode(button.getAttribute('data-unicom-tab'));
+		});
+	});
+	document.getElementById('ub-add-submit').addEventListener('click', submitAdd);
+	document.getElementById('ub-unicom-send').addEventListener('click', sendUnicomSms);
+	document.getElementById('ub-unicom-verify').addEventListener('click', verifyUnicomSms);
+	document.getElementById('ub-unicom-token-login').addEventListener('click', unicomTokenLogin);
+	document.getElementById('ub-unicom-password').addEventListener('click', unicomPasswordLogin);
+	document.getElementById('ub-unicom-qr-start').addEventListener('click', startQr);
+	['ub-unicom-phone', 'ub-unicom-code', 'ub-unicom-token-phone', 'ub-unicom-token', 'ub-unicom-qr-phone'].forEach(function (id) {
+		document.getElementById(id).addEventListener('input', updateUnicomControls);
+	});
+	document.getElementById('ub-code-submit').addEventListener('click', verifyMobile);
+	document.getElementById('ub-code-back').addEventListener('click', function () {
+		document.getElementById('ub-code-form').classList.add('hidden');
+		document.getElementById('ub-add-form').classList.remove('hidden');
+	});
+	root.addEventListener('click', function (event) {
+		var target = event.target.closest('[data-add],[data-select-account],[data-refresh],[data-export-token],[data-delete],[data-rename],[data-bind],[data-readd],[data-auto-save],[data-auto-now]');
+		if (!target) return;
+		if (target.hasAttribute('data-add')) showAdd();
+		else if (target.hasAttribute('data-select-account')) {
+			if (busy) toast('正在刷新或处理上一项操作');
+			else load(target.getAttribute('data-select-account'));
+		}
+		else if (target.hasAttribute('data-refresh')) refresh(target.getAttribute('data-refresh'));
+		else if (target.hasAttribute('data-export-token')) exportUnicomToken(target.getAttribute('data-export-token'));
+		else if (target.hasAttribute('data-delete')) removeAccount(target.getAttribute('data-delete'));
+		else if (target.hasAttribute('data-rename')) rename(target.getAttribute('data-rename'));
+		else if (target.hasAttribute('data-bind')) bindIdentity(target.getAttribute('data-bind'));
+		else if (target.hasAttribute('data-readd')) showAdd(target.getAttribute('data-readd'));
+		else if (target.hasAttribute('data-auto-save')) saveAuto(target.getAttribute('data-auto-save'));
+		else if (target.hasAttribute('data-auto-now')) autoNow(target.getAttribute('data-auto-now'));
+	});
+	document.addEventListener('visibilitychange', function () {
+		if (document.visibilityState === 'visible') scheduleAutoRefresh();
+		else stopAutoRefresh();
+	});
+	window.addEventListener('beforeunload', stopAutoRefresh);
+	updateAddForm();
+	load();
+})();
+</script>
+
+<%+footer%>

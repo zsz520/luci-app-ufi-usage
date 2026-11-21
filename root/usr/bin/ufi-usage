@@ -1,0 +1,3207 @@
+#!/usr/bin/python3
+"""Carrier usage backend for OpenWrt LuCI.
+
+The carrier protocols and usage field mappings are adapted from UFI-AXIS
+(Copyright 2026 Asunano, MIT). This implementation is intentionally read-only
+with respect to carrier accounts. Automatic login is limited to China Mobile;
+China Unicom accounts use SMS verification, ordinary password login when the
+carrier permits it, or QR login.
+"""
+
+from __future__ import annotations
+
+import base64
+import contextlib
+import datetime as dt
+import fcntl
+import hashlib
+import http.cookiejar
+import json
+import os
+import random
+import re
+import secrets
+import shutil
+import ssl
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+from typing import Any
+
+
+APP_NAME = "luci-app-ufi-usage"
+APP_VERSION = "1.0.0-r25"
+LEGACY_DATA_DIR = Path("/etc/ufi-bill")
+DATA_DIR = Path(os.environ.get("UFI_USAGE_DATA_DIR", "/etc/ufi-usage"))
+STATE_FILE = DATA_DIR / "state.json"
+KEY_FILE = DATA_DIR / "master.key"
+LOCK_FILE = DATA_DIR / ".lock"
+AUTO_LOCK_FILE = DATA_DIR / ".auto-login.lock"
+LEGACY_STATE_FILE = LEGACY_DATA_DIR / "state.json"
+LEGACY_KEY_FILE = LEGACY_DATA_DIR / "master.key"
+MAX_REQUEST_BYTES = 65536
+MB_PER_GB = 1024.0
+LEGACY_USAGE_FIELD_MAP = {
+    "last_month_bill_yuan": "last_month_spend_yuan",
+    "current_bill_yuan": "current_spend_yuan",
+    "current_bill_period": "current_spend_period",
+    "current_bill_as_of": "current_spend_as_of",
+}
+
+MOBILE_PLMNS = {"46000", "46002", "46004", "46007", "46008"}
+UNICOM_PLMNS = {"46001", "46006", "46009"}
+TELECOM_PLMNS = {"46003", "46005", "46011"}
+
+PROVIDER_NAMES = {
+    "mobile": "中国移动",
+    "unicom": "中国联通",
+    "cloud": "云上卡",
+    "xj": "小鲸卡",
+}
+
+MOBILE_HOST = "https://h.app.coc.10086.cn"
+MOBILE_SEND = "/biz-orange/LH/uamrandcodeH5/sendMsgLoginH5"
+MOBILE_LOGIN = "/biz-orange/LH/uamrandcodeloginH5/loginH5"
+MOBILE_ENDPOINTS = {
+    "app-plan": "/biz-orange/BH/newPlanRemainQry/getNewPlanRemainQry",
+    "app-fee": "/biz-orange/BN/realFeeQuery/getRealFee",
+    "app-user": "/biz-orange/BN/userInformationService/getUserInformation",
+    "app-planq": "/biz-orange/BN/userPlanQry/getUserPlanQryNew",
+    "app-bills": "/biz-orange/BH/newBillsQry/getNewBills",
+    "app-points": "/biz-orange/BN/scoreQueryService/getScoreQuery",
+    "app-flow": "/biz-orange/BH/userFlowInfoQry/getFlowInfoQry",
+    "app-accout": "/biz-orange/BH/accoutQry/getAccoutInfo",
+}
+MOBILE_REQ_KEY = b"foorettD7vcBawt3"
+MOBILE_RESP_KEY = b"UVic06tpXgMNiApm"
+MOBILE_IV = b"9791027341711819"
+MOBILE_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+)
+
+UNICOM_BASE = "https://m.client.10010.com"
+UNICOM_LOGIN_BASE = "https://loginxhm.10010.com"
+UNICOM_SMS_SEND_PATH = "/mobileService/sendRadomNum.htm"
+UNICOM_SMS_LOGIN_PATH = "/mobileService/radomLogin.htm"
+UNICOM_LOGIN_URL = UNICOM_BASE + "/mobileService/login.htm"
+UNICOM_ONLINE_URL = UNICOM_BASE + "/mobileService/onLine.htm"
+UNICOM_PACKAGE_URL = (
+    UNICOM_BASE
+    + "/servicequerybusiness/operationservice/"
+    "queryOcsPackageFlowLeftContentRevisedInJune"
+)
+UNICOM_BALANCE_URL = (
+    UNICOM_BASE + "/servicequerybusiness/balancenew/accountBalancenew.htm"
+)
+UNICOM_MXX_PACKAGE_URL = UNICOM_PACKAGE_URL.replace(
+    "m.client.10010.com", "mxx.client.10010.com"
+)
+UNICOM_MXX_BALANCE_URL = UNICOM_BALANCE_URL.replace(
+    "m.client.10010.com", "mxx.client.10010.com"
+)
+UNICOM_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+)
+UNICOM_UA_APP = "unicom{version:android@11.0900}"
+UNICOM_VERSION = "android@11.0900"
+UNICOM_SMS_APP_ID = "ChinaunicomMobileBusiness"
+UNICOM_SMS_APP_VERSION = "android@13.0000"
+UNICOM_VERIFICATION_ORIGIN = "https://img.client.10010.com"
+UNICOM_APP_ID_PATTERN = re.compile(r"^[A-Za-z0-9]{64,256}$")
+UNICOM_DEVICE_ID_PATTERN = re.compile(r"^[a-f0-9]{32}$")
+UNICOM_BROWSER_VERIFICATION_TYPES = {
+    "1", "2", "3", "5", "6", "7", "8", "10", "12", "13", "15", "16",
+    "24", "34", "124", "134", "102", "103", "1024", "1034",
+}
+UNICOM_SMS_UA = (
+    "Mozilla/5.0 (Linux; Android 13; SM-G9910 "
+    "Build/SP1A.210812.016; wv) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Version/4.0 Chrome/103.0.5060.129 "
+    "Mobile Safari/537.36; unicom{version:android@13.0000,desmobile:};"
+    "devicetype{deviceBrand:samsung,deviceModel:SM-G9910};{yw_code:}"
+)
+UNICOM_PUBLIC_KEY = (
+    "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDc+CZK9bBA9IU+gZUOc6FUGu7yO9Wp"
+    "TNB0PzmgFBh96Mg1WrovD1oqZ+eIF4LjvxKXGOdI79JRdve9NPhQo07+uqGQgE4imwNn"
+    "Rx7PFtCRryiIEcUoavuNtuRVoBAm6qdB0SrctgaqGfLgKvZHOnwTjyNqjBUxzMeQlEC2"
+    "czEMSwIDAQAB"
+)
+UNICOM_APPID_TEMPLATE = (
+    "{d}f{d}af{d}{d}ad{d}912d306b5053abf90c7ebbb695887bc"
+    "870ae0706d573c348539c26c5c0a878641fcc0d3e90acb9be1e6ef858a"
+    "59af546f3c826988332376b7d18c8ea2398ee3a9c3db947e2471d32a49{d}{d}"
+)
+UNICOM_FORM_EMPTY = {
+    "duanlianjieabc": "",
+    "channelCode": "",
+    "serviceType": "",
+    "saleChannel": "",
+    "externalSources": "",
+    "contactCode": "",
+    "ticket": "",
+    "ticketPhone": "",
+    "ticketChannel": "",
+    "version": "WT",
+    "userNumber": "",
+    "language": "chinese",
+}
+
+CLOUD_BASE = {
+    "cloud": "http://ysv2.iot098.cn",
+    "xj": "http://xj.mywuliankj.cn",
+}
+CLOUD_UA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36"
+
+
+class UserError(Exception):
+    """An expected error whose message is safe to return to the LuCI page."""
+
+
+class AuthRequired(UserError):
+    pass
+
+
+def now_ts() -> int:
+    return int(time.time())
+
+
+def clamp_int(value: Any, low: int, high: int, default: int) -> int:
+    try:
+        return max(low, min(high, int(value)))
+    except (TypeError, ValueError):
+        return default
+
+
+def clean_text(value: Any, limit: int = 120) -> str:
+    text = str(value or "").replace("\x00", "").strip()
+    return text[:limit]
+
+
+def safe_message(value: Any, limit: int = 180) -> str:
+    text = clean_text(value, limit)
+    text = re.sub(r"(?<!\d)(?:\+?86)?(1[3-9]\d)\d{4}(\d{4})(?!\d)", r"\1****\2", text)
+    text = re.sub(r"(?<!\d)\d{12,24}(?!\d)", "****", text)
+    return text
+
+
+def digits(value: Any) -> str:
+    return "".join(ch for ch in str(value or "") if ch.isdigit())
+
+
+def mask_phone(value: str) -> str:
+    number = digits(value)
+    return f"{number[:3]}****{number[-4:]}" if len(number) >= 7 else "****"
+
+
+def mask_card(value: str) -> str:
+    number = digits(value)
+    return f"****{number[-4:]}" if len(number) > 4 else "****"
+
+
+def round_number(value: float | None, places: int = 2) -> float | None:
+    if value is None:
+        return None
+    return round(float(value), places)
+
+
+def obj(value: Any) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+def arr(value: Any) -> list:
+    return value if isinstance(value, list) else []
+
+
+def number(value: Any) -> float | None:
+    try:
+        return float(str(value).replace(",", "").strip())
+    except (TypeError, ValueError):
+        match = re.search(r"-?\d+(?:\.\d+)?", str(value or ""))
+        return float(match.group(0)) if match else None
+
+
+def atomic_json_write(path: Path, value: Any, mode: int = 0o600) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    temp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    payload = json.dumps(
+        value, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+    ).encode("utf-8")
+    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temp, mode)
+        os.replace(temp, path)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            temp.unlink()
+
+
+def ensure_data_dir() -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(DATA_DIR, 0o700)
+    if not KEY_FILE.exists() and LEGACY_KEY_FILE.exists():
+        shutil.copy2(LEGACY_KEY_FILE, KEY_FILE)
+        os.chmod(KEY_FILE, 0o600)
+    if not KEY_FILE.exists():
+        KEY_FILE.write_text(secrets.token_hex(32) + "\n", encoding="ascii")
+        os.chmod(KEY_FILE, 0o600)
+    if not STATE_FILE.exists() and LEGACY_STATE_FILE.exists():
+        shutil.copy2(LEGACY_STATE_FILE, STATE_FILE)
+        os.chmod(STATE_FILE, 0o600)
+    if not STATE_FILE.exists():
+        atomic_json_write(STATE_FILE, default_state())
+
+
+def default_state() -> dict:
+    return {
+        "version": 2,
+        "accounts": {},
+        "active_account": "",
+        "auto": {
+            "enabled": False,
+            "check_interval_minutes": 30,
+            "relogin_interval_minutes": 360,
+            "daily_sms_limit": 3,
+        },
+        "rate": {},
+    }
+
+
+@contextlib.contextmanager
+def state_lock():
+    ensure_data_dir()
+    fd = os.open(LOCK_FILE, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
+def load_state() -> dict:
+    ensure_data_dir()
+    try:
+        state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        state = default_state()
+    state.setdefault("accounts", {})
+    state.setdefault("auto", default_state()["auto"])
+    state.setdefault("rate", {})
+    state.setdefault("active_account", "")
+    migrated = state.get("version") != 2
+    state["version"] = 2
+    for account in state["accounts"].values():
+        if "usage" not in account and "bill" in account:
+            account["usage"] = account.pop("bill")
+            migrated = True
+        usage = account.get("usage")
+        if isinstance(usage, dict):
+            for legacy_key, usage_key in LEGACY_USAGE_FIELD_MAP.items():
+                if legacy_key not in usage:
+                    continue
+                if usage_key not in usage:
+                    usage[usage_key] = usage[legacy_key]
+                usage.pop(legacy_key, None)
+                migrated = True
+        if obj(account).get("provider") == "unicom":
+            if "credential_enc" in account:
+                account.pop("credential_enc", None)
+                migrated = True
+            if account.get("auto_enabled"):
+                account["auto_enabled"] = False
+                migrated = True
+    if migrated:
+        atomic_json_write(STATE_FILE, state)
+    return state
+
+
+def save_state(state: dict) -> None:
+    atomic_json_write(STATE_FILE, state)
+
+
+def secret_openssl(data: bytes, decrypt: bool = False) -> bytes:
+    ensure_data_dir()
+    args = [
+        "openssl",
+        "enc",
+        "-aes-256-cbc",
+        "-pbkdf2",
+        "-salt",
+        "-a",
+        "-A",
+        "-pass",
+        f"file:{KEY_FILE}",
+    ]
+    if decrypt:
+        args.insert(2, "-d")
+    result = subprocess.run(
+        args,
+        input=data,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        timeout=15,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise UserError("本地加密数据读取失败")
+    return result.stdout.strip()
+
+
+def encrypt_secret(value: Any) -> str:
+    plain = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return secret_openssl(plain).decode("ascii")
+
+
+def decrypt_secret(value: str | None, default: Any = None) -> Any:
+    if not value:
+        return default
+    try:
+        plain = secret_openssl(value.encode("ascii"), decrypt=True)
+        return json.loads(plain.decode("utf-8"))
+    except (OSError, ValueError, UnicodeError, UserError):
+        return default
+
+
+def cookie_record(cookie: http.cookiejar.Cookie) -> dict:
+    return {
+        "version": cookie.version,
+        "name": cookie.name,
+        "value": cookie.value,
+        "port": cookie.port,
+        "port_specified": cookie.port_specified,
+        "domain": cookie.domain,
+        "domain_specified": cookie.domain_specified,
+        "domain_initial_dot": cookie.domain_initial_dot,
+        "path": cookie.path,
+        "path_specified": cookie.path_specified,
+        "secure": cookie.secure,
+        "expires": cookie.expires,
+        "discard": cookie.discard,
+        "comment": cookie.comment,
+        "comment_url": cookie.comment_url,
+        "rfc2109": cookie.rfc2109,
+    }
+
+
+def cookie_from_record(record: dict) -> http.cookiejar.Cookie:
+    return http.cookiejar.Cookie(
+        version=int(record.get("version") or 0),
+        name=str(record.get("name") or ""),
+        value=str(record.get("value") or ""),
+        port=record.get("port"),
+        port_specified=bool(record.get("port_specified")),
+        domain=str(record.get("domain") or ""),
+        domain_specified=bool(record.get("domain_specified")),
+        domain_initial_dot=bool(record.get("domain_initial_dot")),
+        path=str(record.get("path") or "/"),
+        path_specified=bool(record.get("path_specified")),
+        secure=bool(record.get("secure")),
+        expires=record.get("expires"),
+        discard=bool(record.get("discard")),
+        comment=record.get("comment"),
+        comment_url=record.get("comment_url"),
+        rest={},
+        rfc2109=bool(record.get("rfc2109")),
+    )
+
+
+def save_cookies(jar: http.cookiejar.CookieJar) -> list[dict]:
+    return [cookie_record(cookie) for cookie in jar]
+
+
+def restore_cookies(records: Any) -> http.cookiejar.CookieJar:
+    jar = http.cookiejar.CookieJar()
+    for item in arr(records):
+        with contextlib.suppress(Exception):
+            jar.set_cookie(cookie_from_record(obj(item)))
+    return jar
+
+
+def opener_with(jar: http.cookiejar.CookieJar) -> urllib.request.OpenerDirector:
+    context = ssl.create_default_context()
+    return urllib.request.build_opener(
+        urllib.request.HTTPCookieProcessor(jar),
+        urllib.request.HTTPSHandler(context=context),
+    )
+
+
+def http_call(
+    opener: urllib.request.OpenerDirector,
+    url: str,
+    *,
+    data: bytes | None = None,
+    headers: dict[str, str] | None = None,
+    method: str | None = None,
+    timeout: int = 25,
+) -> tuple[int, bytes, dict[str, str]]:
+    request = urllib.request.Request(
+        url, data=data, headers=headers or {}, method=method
+    )
+    try:
+        with opener.open(request, timeout=timeout) as response:
+            return (
+                int(response.status),
+                response.read(),
+                {key.lower(): value for key, value in response.headers.items()},
+            )
+    except urllib.error.HTTPError as error:
+        body = error.read()
+        return (
+            int(error.code),
+            body,
+            {key.lower(): value for key, value in error.headers.items()},
+        )
+    except (urllib.error.URLError, TimeoutError, OSError) as error:
+        raise UserError(f"网络请求失败（{type(error).__name__}）") from None
+
+
+def openssl_aes(value: bytes, key: bytes, decrypt: bool = False) -> bytes:
+    args = [
+        "openssl",
+        "enc",
+        "-aes-128-cbc",
+        "-nosalt",
+        "-K",
+        key.hex(),
+        "-iv",
+        MOBILE_IV.hex(),
+        "-base64",
+        "-A",
+    ]
+    if decrypt:
+        args.insert(2, "-d")
+    result = subprocess.run(
+        args,
+        input=value,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        timeout=15,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise UserError("运营商加密处理失败")
+    return result.stdout.strip()
+
+
+def mobile_envelope(path: str, request_body: dict) -> tuple[bytes, dict[str, str]]:
+    nonce = "".join(str(random.randrange(10)) for _ in range(8))
+    timestamp = str(int(time.time() * 1000))
+    token_seed = secrets.token_hex(16)
+    trace_tail = "".join(
+        random.choice("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+        for _ in range(20)
+    )
+    envelope = {
+        "cid": "0",
+        "en": "0",
+        "t": "0",
+        "sn": "0",
+        "cv": "0",
+        "st": "0",
+        "sv": "0",
+        "sp": "0",
+        "xk": token_seed,
+        "xc": "web",
+        "imei": "",
+        "nt": "",
+        "sb": "",
+        "prov": "100",
+        "city": "0000",
+        "tel": "99999999999",
+        "reqBody": request_body,
+    }
+    plain = json.dumps(
+        envelope, ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8")
+    body = openssl_aes(plain, MOBILE_REQ_KEY)
+    material = f"{token_seed}_{path}_{timestamp}_{nonce}".encode("utf-8")
+    token = openssl_aes(material, MOBILE_REQ_KEY).decode("ascii")
+    signature = hashlib.md5(
+        f"{token}_{timestamp}_{nonce}_null".encode("utf-8")
+    ).hexdigest()
+    headers = {
+        "User-Agent": MOBILE_UA,
+        "Accept": "application/json, text/plain, */*",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "x-time": timestamp,
+        "x-nonce": nonce,
+        "x-token": token,
+        "x-sign": signature,
+        "TRACE": f"{token_seed}_{path}_{timestamp}_{trace_tail}",
+        "x-qen": "1",
+        "Origin": "https://wx.10086.cn",
+        "Referer": "https://wx.10086.cn/cmcc-service/app-pages/main/marginQuery",
+    }
+    return body, headers
+
+
+def mobile_post(
+    opener: urllib.request.OpenerDirector, path: str, request_body: dict
+) -> dict:
+    body, headers = mobile_envelope(path, request_body)
+    status, raw, _ = http_call(
+        opener, MOBILE_HOST + path, data=body, headers=headers
+    )
+    if status < 200 or status >= 300:
+        raise UserError(f"中国移动接口失败（HTTP {status}）")
+    try:
+        root = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeError):
+        raise UserError("中国移动返回格式异常") from None
+    encrypted = str(obj(root).get("body") or "")
+    if not encrypted:
+        raise UserError("中国移动响应缺少加密内容")
+    try:
+        plain = openssl_aes(
+            encrypted.encode("ascii"), MOBILE_RESP_KEY, decrypt=True
+        )
+        payload = json.loads(plain.decode("utf-8"))
+    except (ValueError, UnicodeError, UserError):
+        raise UserError("中国移动响应解密失败，接口密钥可能已更新") from None
+    return obj(payload)
+
+
+def mobile_require_ok(payload: dict, action: str) -> None:
+    code = clean_text(payload.get("retCode"), 30)
+    if code and code not in {"000000", "0", "SUCCESS", "success"}:
+        body = obj(payload.get("rspBody"))
+        message = clean_text(
+            body.get("retDesc") or payload.get("retDesc") or payload.get("retMsg"),
+            100,
+        )
+        raise UserError(f"中国移动{action}失败（{code}：{message or '未返回原因'}）")
+
+
+def parse_time(value: Any) -> str | None:
+    text = clean_text(value, 40)
+    if not text:
+        return None
+    match = re.match(
+        r"^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?", text
+    )
+    if match:
+        parts = list(match.groups())
+        parts[5] = parts[5] or "00"
+        return f"{parts[0]}-{parts[1]}-{parts[2]}T{parts[3]}:{parts[4]}:{parts[5]}"
+    match = re.match(r"^(\d{4})年(\d{2})月(\d{2})日", text)
+    if match:
+        return f"{match.group(1)}-{match.group(2)}-{match.group(3)}T23:59:00"
+    return None
+
+
+def mobile_parse_tenure(value: Any) -> int | None:
+    text = clean_text(value, 50)
+    years = re.search(r"(\d+)\s*年", text)
+    months = re.search(r"(\d+)\s*个月", text)
+    year_count = int(years.group(1)) if years else 0
+    month_count = int(months.group(1)) if months else 0
+    return year_count * 12 + month_count if year_count or month_count else None
+
+
+def parse_mobile_usage(raw_map: dict, phone: str) -> dict:
+    warnings: list[str] = []
+    plan_body = obj(obj(raw_map.get("app-plan")).get("rspBody"))
+    rows = arr(
+        obj(
+            obj(plan_body.get("newPlanRemainQryRes")).get(
+                "planRemianFlowListRes"
+            )
+        ).get("planRemianFlowRes")
+    )
+    totals = {
+        "general_used_gb": 0.0,
+        "general_total_gb": 0.0,
+        "general_remaining_gb": 0.0,
+        "directed_used_gb": 0.0,
+        "directed_total_gb": 0.0,
+        "directed_remaining_gb": 0.0,
+        "regional_used_gb": None,
+        "regional_total_gb": None,
+        "regional_remaining_gb": None,
+        "general_unlimited": False,
+    }
+    packages: list[dict] = []
+
+    def factor(unit: Any) -> float:
+        return 1.0 if str(unit) == "04" else 1.0 / 1024.0
+
+    for row_value in rows:
+        row = obj(row_value)
+        directed = str(row.get("flowtype")) == "1"
+        scale = factor(row.get("unit"))
+        used = (number(row.get("flowUsdNum")) or 0.0) * scale
+        total = (number(row.get("flowSumNum")) or 0.0) * scale
+        remain = (number(row.get("flowRemainNum")) or 0.0) * scale
+        prefix = "directed" if directed else "general"
+        totals[f"{prefix}_used_gb"] += used
+        totals[f"{prefix}_total_gb"] += total
+        totals[f"{prefix}_remaining_gb"] += remain
+        for plan_value in arr(row.get("planRemianFlowInfoRes")):
+            plan = obj(plan_value)
+            name = clean_text(plan.get("planName"), 80) or "流量包"
+            for detail_value in arr(plan.get("flowInfoRes")):
+                detail = obj(detail_value)
+                detail_scale = factor(detail.get("unit"))
+                packages.append(
+                    {
+                        "kind": prefix,
+                        "name": name,
+                        "remaining_gb": round_number(
+                            (number(detail.get("remainRes")) or 0.0)
+                            * detail_scale
+                        ),
+                        "total_gb": round_number(
+                            (number(detail.get("totalRes")) or 0.0) * detail_scale
+                        ),
+                        "valid_from": parse_time(plan.get("validDate")),
+                        "valid_to": parse_time(plan.get("expireDate")),
+                    }
+                )
+    if not rows:
+        warnings.append("未取到流量余量")
+
+    fee = obj(obj(raw_map.get("app-fee")).get("rspBody"))
+    balance = number(fee.get("curFeeTotal"))
+    if balance is None:
+        balance = number(fee.get("realBalanceFee"))
+        warnings.append("余额接口未返回可用余额")
+
+    user = obj(obj(obj(raw_map.get("app-user")).get("rspBody")).get("userInfo"))
+    plan_info = next(
+        iter(
+            arr(
+                obj(obj(raw_map.get("app-planq")).get("rspBody")).get(
+                    "planQryInfos"
+                )
+            )
+        ),
+        {},
+    )
+    plan_info = obj(plan_info)
+    plan_name = clean_text(plan_info.get("curPlanName"), 100)
+    brand = clean_text(plan_info.get("brandName"), 60)
+    if plan_name and brand and brand not in plan_name:
+        plan_name = f"{plan_name}（{brand}）"
+
+    spend_rows = arr(
+        obj(obj(raw_map.get("app-bills")).get("rspBody")).get("historyBillInfo")
+    )
+    spend = obj(next(iter(spend_rows), {}))
+    account_rows = arr(
+        obj(obj(raw_map.get("app-accout")).get("rspBody")).get(
+            "accoutQryInfoHis"
+        )
+    )
+    account = obj(next(iter(account_rows), {}))
+    monthly = obj(obj(obj(raw_map.get("app-flow")).get("rspBody")).get("homeFlowInfo"))
+    monthly_used = number(monthly.get("usedTotal"))
+    if monthly_used is not None and str(monthly.get("unit")) == "1":
+        monthly_used /= 1024.0
+    points = number(obj(obj(raw_map.get("app-points")).get("rspBody")).get("pointValue"))
+
+    for key, payload_value in raw_map.items():
+        error = obj(payload_value).get("__error")
+        if error:
+            warnings.append(f"{key} 接口失败：{clean_text(error, 100)}")
+
+    return {
+        "carrier": "mobile",
+        "access_method": "carrier",
+        "phone_masked": mask_phone(phone),
+        "plan_name": plan_name or None,
+        "owner_name": clean_text(user.get("userName"), 60) or None,
+        "tenure_months": mobile_parse_tenure(user.get("userAge")),
+        "star_level": round_number(number(user.get("starLevel")), 2),
+        "balance_yuan": round_number(balance),
+        "last_month_spend_yuan": round_number(number(account.get("allLastMonthBill"))),
+        "current_spend_yuan": round_number(
+            number(spend.get("totalBill"))
+            if spend
+            else number(account.get("allThisMonthOutBill"))
+        ),
+        "current_spend_period": clean_text(spend.get("inBill"), 50) or None,
+        "current_spend_as_of": clean_text(spend.get("billCycleEndDate"), 50) or None,
+        "points": int(points) if points is not None else None,
+        "flow": {
+            key: round_number(value) if isinstance(value, float) else value
+            for key, value in totals.items()
+        },
+        "monthly_used_gb": round_number(monthly_used),
+        "voice": None,
+        "sms_usage": None,
+        "packages": packages,
+        "cloud_card": None,
+        "warnings": warnings,
+    }
+
+
+def unicom_rsa(value: str) -> str:
+    pem = (
+        "-----BEGIN PUBLIC KEY-----\n"
+        + "\n".join(
+            UNICOM_PUBLIC_KEY[index : index + 64]
+            for index in range(0, len(UNICOM_PUBLIC_KEY), 64)
+        )
+        + "\n-----END PUBLIC KEY-----\n"
+    )
+    fd, key_path = tempfile.mkstemp(prefix="ufi-usage-rsa-", text=True)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="ascii") as handle:
+            handle.write(pem)
+        result = subprocess.run(
+            [
+                "openssl",
+                "pkeyutl",
+                "-encrypt",
+                "-pubin",
+                "-inkey",
+                key_path,
+                "-pkeyopt",
+                "rsa_padding_mode:pkcs1",
+            ],
+            input=(value + "".join(str(random.randrange(10)) for _ in range(6))).encode(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=15,
+            check=False,
+        )
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(key_path)
+    if result.returncode != 0:
+        raise UserError("联通登录加密失败")
+    return base64.b64encode(result.stdout).decode("ascii")
+
+
+def unicom_app_id() -> str:
+    value = UNICOM_APPID_TEMPLATE
+    while "{d}" in value:
+        value = value.replace("{d}", str(random.randrange(10)), 1)
+    return value
+
+
+def unicom_login_identity(state: dict) -> dict[str, str]:
+    identity = obj(decrypt_secret(state.get("unicom_identity_enc"), {}))
+    app_id = clean_text(identity.get("app_id"), 256)
+    device_id = clean_text(identity.get("device_id"), 32).lower()
+    changed = False
+    if not UNICOM_APP_ID_PATTERN.fullmatch(app_id):
+        app_id = unicom_app_id()
+        changed = True
+    if not UNICOM_DEVICE_ID_PATTERN.fullmatch(device_id):
+        device_id = secrets.token_hex(16)
+        changed = True
+    result = {"app_id": app_id, "device_id": device_id}
+    if changed:
+        state["unicom_identity_enc"] = encrypt_secret(result)
+        save_state(state)
+    return result
+
+
+def unicom_sms_device_fields(
+    phone: str, device_id: str, app_id: str
+) -> dict[str, str]:
+    return {
+        "appId": UNICOM_SMS_APP_ID,
+        "appid": app_id,
+        "version": UNICOM_SMS_APP_VERSION,
+        "deviceId": device_id,
+        "deviceCode": device_id,
+        "androidId": device_id[8:24],
+        "deviceBrand": "samsung",
+        "deviceModel": "SM-G9910",
+        "deviceOS": "android13",
+        "keyVersion": "",
+        "isFirstInstall": "1",
+        "mobile": unicom_rsa(phone),
+    }
+
+
+def unicom_sms_call(
+    opener: urllib.request.OpenerDirector,
+    path: str,
+    fields: dict[str, str],
+) -> dict:
+    status, raw, _ = http_call(
+        opener,
+        UNICOM_LOGIN_BASE + path,
+        data=form_data(fields),
+        headers={
+            "User-Agent": UNICOM_SMS_UA,
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Encoding": "identity",
+        },
+    )
+    text = raw.decode("utf-8", errors="replace").strip()
+    if status < 200 or status >= 300:
+        raise UserError(f"联通短信接口失败（HTTP {status}）")
+    try:
+        payload = json.loads(text)
+    except ValueError:
+        raise UserError("联通短信接口返回格式异常") from None
+    return obj(payload)
+
+
+def unicom_sms_challenge(payload: dict) -> str | None:
+    if clean_text(payload.get("code"), 20) not in {"ECS99998", "ECS99999"}:
+        return None
+    verify_type = clean_text(payload.get("type"), 20)
+    if verify_type == "4":
+        return "联通要求打开手机 App 完成安全验证，请改用扫码登录"
+    parsed = urllib.parse.urlsplit(clean_text(payload.get("url"), 2048))
+    if (
+        verify_type not in UNICOM_BROWSER_VERIFICATION_TYPES
+        or f"{parsed.scheme}://{parsed.netloc}" != UNICOM_VERIFICATION_ORIGIN
+        or parsed.path != "/loginRisk/index.html"
+        or not clean_text(payload.get("mobile"), 4096)
+    ):
+        return "联通返回的安全验证当前页面无法完成，请改用扫码登录"
+    return None
+
+
+def unicom_store_verification(
+    account: dict,
+    *,
+    action: str,
+    phone: str,
+    app_id: str,
+    device_id: str,
+    fields: dict[str, str],
+    jar: http.cookiejar.CookieJar,
+    payload: dict,
+) -> dict:
+    verification_id = secrets.token_hex(16)
+    session = load_session(account)
+    session["verification"] = {
+        "id": verification_id,
+        "action": action,
+        "phone": phone,
+        "app_id": app_id,
+        "device_id": device_id,
+        "fields": fields,
+        "cookies": save_cookies(jar),
+        "context": payload,
+        "created_at": now_ts(),
+    }
+    store_session(account, session)
+    return {
+        "id": verification_id,
+        "type": clean_text(payload.get("type"), 20),
+        "url": clean_text(payload.get("url"), 2048),
+        "context": payload,
+    }
+
+
+def cookie_value(
+    jar: http.cookiejar.CookieJar, name: str
+) -> str:
+    return next(
+        (cookie.value for cookie in jar if cookie.name == name),
+        "",
+    )
+
+
+def set_domain_cookie(
+    jar: http.cookiejar.CookieJar,
+    name: str,
+    value: str,
+    *,
+    domain: str = ".10010.com",
+    path: str = "/",
+) -> None:
+    if not value:
+        return
+    jar.set_cookie(
+        http.cookiejar.Cookie(
+            0,
+            name,
+            value,
+            None,
+            False,
+            domain,
+            True,
+            domain.startswith("."),
+            path,
+            True,
+            True,
+            None,
+            False,
+            None,
+            None,
+            {},
+            False,
+        )
+    )
+
+
+def form_data(values: dict[str, Any]) -> bytes:
+    return urllib.parse.urlencode(values).encode("utf-8")
+
+
+def unicom_json_call(
+    opener: urllib.request.OpenerDirector,
+    url: str,
+    form: dict[str, Any],
+    *,
+    referer: str = UNICOM_BASE + "/",
+    headers: dict[str, str] | None = None,
+) -> dict:
+    request_headers = {
+        "User-Agent": UNICOM_UA_APP,
+        "Referer": referer,
+        "Content-Type": "application/x-www-form-urlencoded",
+    }
+    request_headers.update(headers or {})
+    status, raw, _ = http_call(
+        opener, url, data=form_data(form), headers=request_headers
+    )
+    text = raw.decode("utf-8", errors="replace").strip()
+    if text in {"999998", "999999"}:
+        raise AuthRequired("联通会话已失效，请重新登录或扫码")
+    if status < 200 or status >= 300:
+        raise UserError(f"联通接口失败（HTTP {status}）")
+    try:
+        payload = json.loads(text)
+    except ValueError:
+        raise UserError("联通返回格式异常") from None
+    return obj(payload)
+
+
+def unescape_jsonp(text: str) -> dict:
+    match = re.search(r"\((\{.*\})\)\s*;?\s*$", text.strip(), re.S)
+    if not match:
+        raise UserError("联通二维码接口返回格式异常")
+    try:
+        return obj(json.loads(match.group(1)))
+    except ValueError:
+        raise UserError("联通二维码接口返回格式异常") from None
+
+
+def unicom_detail_blocks(node: Any) -> list[list[dict]]:
+    groups = arr(node) if isinstance(node, list) else [node] if isinstance(node, dict) else []
+    return [
+        [obj(item) for item in arr(obj(group).get("details"))]
+        for group in groups
+    ]
+
+
+def unicom_detail_key(item: dict) -> str:
+    fee_policy_id = clean_text(item.get("feePolicyId"), 100)
+    if fee_policy_id:
+        return f"feePolicyId:{fee_policy_id}"
+    fields = (
+        item.get("addupItemCode"),
+        item.get("feePolicyName") or item.get("addUpItemName"),
+        item.get("endDate1") or item.get("endDate"),
+        item.get("flowType"),
+        item.get("total"),
+    )
+    return "mix:" + "|".join(clean_text(value, 160) for value in fields)
+
+
+def unicom_merge_details(*collections: list[dict]) -> list[dict]:
+    seen: set[str] = set()
+    merged: list[dict] = []
+    for collection in collections:
+        for item in collection:
+            key = unicom_detail_key(item)
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(item)
+    return merged
+
+
+def unicom_merged_resource_details(package: dict) -> list[dict]:
+    resources = unicom_detail_blocks(package.get("resources"))
+    unshared = unicom_detail_blocks(package.get("unshared"))
+    shared = unicom_detail_blocks(package.get("shareData"))
+    count = max(len(resources), len(unshared), len(shared))
+    merged: list[dict] = []
+    for index in range(count):
+        blocks = []
+        for groups in (unshared, resources, shared):
+            blocks.append(groups[index] if index < len(groups) else [])
+        merged.extend(unicom_merge_details(*blocks))
+    return merged
+
+
+def unicom_normalize_time(value: Any) -> str | None:
+    return parse_time(value)
+
+
+def parse_unicom_usage(package_payload: dict | None, balance_payload: dict | None, phone: str) -> dict:
+    warnings: list[str] = []
+    package = obj(package_payload)
+    if not package_payload:
+        warnings.append("联通余量接口未返回数据")
+    data_items: list[dict] = []
+    voice_items: list[dict] = []
+    sms_items: list[dict] = []
+    for item in unicom_merged_resource_details(package):
+        if item.get("hide") is True or str(item.get("hide")).lower() == "true":
+            continue
+        kind = str(item.get("elemType") or "")
+        if kind == "1":
+            voice_items.append(item)
+        elif kind == "2":
+            sms_items.append(item)
+        elif kind == "3":
+            data_items.append(item)
+
+    flow = {
+        "general_used_gb": 0.0,
+        "general_total_gb": 0.0,
+        "general_remaining_gb": 0.0,
+        "directed_used_gb": 0.0,
+        "directed_total_gb": 0.0,
+        "directed_remaining_gb": 0.0,
+        "regional_used_gb": 0.0,
+        "regional_total_gb": 0.0,
+        "regional_remaining_gb": 0.0,
+        "general_unlimited": False,
+        "directed_unlimited": False,
+        "regional_unlimited": False,
+    }
+    packages = []
+    for item in data_items:
+        used = number(item.get("use")) or 0.0
+        remaining = number(item.get("remain")) or 0.0
+        total = number(item.get("total"))
+        if total is None:
+            total = used + remaining
+        flow_type = str(item.get("flowType") or "1")
+        prefix = "directed" if flow_type == "2" else "regional" if flow_type == "3" else "general"
+        unlimited = str(item.get("limited") or "").strip() == "1"
+        type_mark = str(
+            item.get("typemark") or item.get("typeMark") or ""
+        ).strip()
+        sharing = "shared" if type_mark == "0" else "unshared" if type_mark == "1" else None
+        flow[f"{prefix}_used_gb"] += used / MB_PER_GB
+        flow[f"{prefix}_total_gb"] += total / MB_PER_GB
+        flow[f"{prefix}_remaining_gb"] += remaining / MB_PER_GB
+        if unlimited:
+            flow[f"{prefix}_unlimited"] = True
+        packages.append(
+            {
+                "kind": prefix,
+                "name": clean_text(
+                    item.get("feePolicyName") or item.get("addUpItemName"), 100
+                )
+                or "流量包",
+                "fee_policy_id": clean_text(item.get("feePolicyId"), 100) or None,
+                "used_gb": round_number(used / MB_PER_GB),
+                "remaining_gb": round_number(remaining / MB_PER_GB),
+                "total_gb": round_number(total / MB_PER_GB),
+                "unlimited": unlimited,
+                "sharing": sharing,
+                "valid_from": None,
+                "valid_to": unicom_normalize_time(
+                    item.get("endDate1") or item.get("endDate")
+                ),
+            }
+        )
+    packages.sort(
+        key=lambda item: (
+            0 if item.get("unlimited") else 1,
+            item.get("kind") != "general",
+            item.get("name") or "",
+        )
+    )
+    if not data_items:
+        warnings.append("联通余量明细为空")
+    for key in (
+        "general_used_gb",
+        "general_total_gb",
+        "general_remaining_gb",
+        "directed_used_gb",
+        "directed_total_gb",
+        "directed_remaining_gb",
+        "regional_used_gb",
+        "regional_total_gb",
+        "regional_remaining_gb",
+    ):
+        flow[key] = round_number(flow[key])
+
+    def resource(items: list[dict], total_key: str, used_key: str, remain_key: str) -> dict | None:
+        if items:
+            used = sum((number(item.get("use")) or 0.0) for item in items)
+            remaining = sum((number(item.get("remain")) or 0.0) for item in items)
+            total = sum((number(item.get("total")) or 0.0) for item in items)
+            if total <= 0:
+                total = used + remaining
+            return {
+                "used": round_number(used, 1),
+                "total": round_number(total, 1),
+                "remaining": round_number(remaining, 1),
+            }
+        if number(package.get(total_key)) is not None:
+            used = number(package.get(used_key)) or 0.0
+            remaining = number(package.get(remain_key)) or 0.0
+            total = max(number(package.get(total_key)) or 0.0, used + remaining)
+            return {
+                "used": round_number(used, 1),
+                "total": round_number(total, 1),
+                "remaining": round_number(remaining, 1),
+            }
+        return None
+
+    voice = resource(voice_items, "voiceSumresource", "voiceHeadUsed", "canUseValueAll")
+    sms_usage = resource(sms_items, "smsSumresource", "smsHeadUsed", "canUseSmsAll")
+
+    def find_balance(payload: dict | None) -> float | None:
+        if not payload:
+            return None
+        direct = number(payload.get("curntbalancecust"))
+        if direct is not None:
+            return direct
+        found: list[tuple[str, float]] = []
+
+        def walk(node: dict, prefix: str, depth: int) -> None:
+            if depth > 2:
+                return
+            for key, value in node.items():
+                low = key.lower()
+                if isinstance(value, dict):
+                    walk(value, f"{prefix}{key}.", depth + 1)
+                else:
+                    parsed = number(value)
+                    if parsed is not None and ("balance" in low or "fee" in low):
+                        found.append((f"{prefix}{key}", parsed))
+
+        walk(payload, "", 0)
+        preferred = next(
+            (
+                value
+                for key, value in found
+                if "available" in key.lower() or "curbalance" in key.lower() or "balance" in key.lower()
+            ),
+            None,
+        )
+        return preferred if preferred is not None else (found[0][1] if found else None)
+
+    balance = find_balance(balance_payload)
+    if balance is None:
+        warnings.append("联通余额接口未返回可用字段")
+    return {
+        "carrier": "unicom",
+        "access_method": "carrier",
+        "phone_masked": mask_phone(phone),
+        "plan_name": clean_text(package.get("packageName"), 100) or None,
+        "owner_name": None,
+        "tenure_months": None,
+        "star_level": None,
+        "balance_yuan": round_number(balance),
+        "last_month_spend_yuan": None,
+        "current_spend_yuan": None,
+        "current_spend_period": None,
+        "current_spend_as_of": None,
+        "points": None,
+        "flow": flow,
+        "monthly_used_gb": None,
+        "voice": voice,
+        "sms_usage": sms_usage,
+        "packages": packages,
+        "cloud_card": None,
+        "warnings": warnings,
+    }
+
+
+def cloud_api(
+    opener: urllib.request.OpenerDirector,
+    base_url: str,
+    path: str,
+    *,
+    form: dict[str, Any] | None = None,
+) -> dict:
+    headers = {
+        "User-Agent": CLOUD_UA,
+        "Accept": "application/json, text/plain, */*",
+    }
+    data = None
+    if form is not None:
+        data = form_data(form)
+        headers["Content-Type"] = "application/x-www-form-urlencoded"
+    status, raw, _ = http_call(opener, base_url + path, data=data, headers=headers)
+    try:
+        payload = json.loads(raw.decode("utf-8", errors="replace"))
+    except ValueError:
+        raise UserError(f"物联卡站点返回格式异常（HTTP {status}）") from None
+    payload = obj(payload)
+    code = int(number(payload.get("code")) or 0)
+    if code != 0:
+        message = clean_text(payload.get("msg"), 100)
+        if code == 14:
+            raise AuthRequired(message or "物联卡会话已失效，请重新登录")
+        if code == 23:
+            raise UserError(message or "物联卡站点刷新人数过多，请稍后再试")
+        if code == 27:
+            detail = obj(payload.get("data"))
+            verify_type = detail.get("type")
+            phone = clean_text(detail.get("phone"), 30)
+            hint = {
+                0: "安全密码",
+                1: "短信验证码",
+                2: "绑定手机号后四位",
+            }.get(verify_type, "验证")
+            suffix = f"（{phone}）" if phone else ""
+            raise UserError(f"登录需要{suffix}：{message or hint}")
+        raise UserError(f"物联卡站点失败（code={code}：{message or '未返回原因'}）")
+    return obj(payload.get("data"))
+
+
+def parse_cloud_usage(
+    provider: str,
+    series: dict | None,
+    snapshot: dict,
+    plans: list[dict],
+    orders: list[dict],
+    real_orders: list[dict],
+    warnings: list[str],
+) -> dict:
+    used_mb = number(snapshot.get("used")) or 0.0
+    free_mb = number(snapshot.get("free"))
+    unlimited = free_mb is None
+    total_mb = used_mb if unlimited else used_mb + (free_mb or 0.0)
+    real_used_mb = number(snapshot.get("realUsed"))
+    active_real = [
+        item
+        for item in real_orders
+        if item.get("effectiveType") in (None, 1) and item.get("state") in (None, 2)
+    ]
+    real_totals = [number(item.get("flowReal")) for item in active_real]
+    real_totals = [item for item in real_totals if item is not None]
+    real_total_mb = sum(real_totals) if real_totals else None
+    real_remaining_mb = (
+        max(0.0, real_total_mb - real_used_mb)
+        if real_total_mb is not None and real_used_mb is not None
+        else None
+    )
+    status_map = {
+        -1: "未知",
+        0: "正常",
+        1: "库存",
+        2: "待激活",
+        3: "风险停机",
+        4: "已停机",
+        5: "可测试",
+        6: "机卡分离",
+        7: "已销户",
+    }
+    realname_map = {-2: "未实名", -1: "未知", 0: "已实名", 1: "未实名"}
+    order_state = {0: "等待", 1: "进行中", 2: "成功", 3: "失败", 4: "退款", -1: "删除"}
+    pay_type = {0: "余额", 1: "支付宝", 2: "微信", 3: "接口", 4: "批量"}
+    series_name = (
+        clean_text(obj(series).get("name"), 80)
+        or clean_text(obj(series).get("showName"), 80)
+        or next(
+            (
+                clean_text(obj(obj(plan).get("card")).get("series"), 80)
+                for plan in plans
+                if obj(obj(plan).get("card")).get("series")
+            ),
+            "",
+        )
+    )
+    package_items = []
+    for plan_value in plans:
+        plan = obj(plan_value)
+        name = clean_text(plan.get("setMealName"), 100)
+        if not name:
+            continue
+        total = number(plan.get("flowVirtual"))
+        if total is None:
+            total = number(plan.get("flowReal")) or 0.0
+        used = number(plan.get("flowUsedVirtual"))
+        if used is None:
+            used = number(plan.get("flowUsed")) or 0.0
+        package_items.append(
+            {
+                "kind": "general",
+                "name": name,
+                "remaining_gb": round_number(max(0.0, total - used) / MB_PER_GB),
+                "total_gb": round_number(total / MB_PER_GB),
+                "valid_from": parse_time(plan.get("effectiveTime")),
+                "valid_to": parse_time(plan.get("expirationTime")),
+            }
+        )
+    order_items = []
+    for order_value in orders:
+        order = obj(order_value)
+        name = clean_text(order.get("setMealName") or order.get("outTradeNo"), 100)
+        if not name:
+            continue
+        order_items.append(
+            {
+                "name": name,
+                "amount_yuan": round_number(number(order.get("amount"))),
+                "paid_yuan": round_number(number(order.get("paymentAmount"))),
+                "status_text": order_state.get(order.get("state"), "未知"),
+                "pay_type_text": pay_type.get(order.get("payType")),
+                "created_at": clean_text(order.get("createTime"), 50) or None,
+                "effective_time": clean_text(order.get("effectiveTime"), 50) or None,
+                "expiration_time": clean_text(order.get("expirationTime"), 50) or None,
+            }
+        )
+    expires = clean_text(snapshot.get("expirationTime"), 50) or None
+    days_left = None
+    if expires:
+        with contextlib.suppress(ValueError):
+            days_left = (
+                dt.datetime.strptime(expires[:19], "%Y-%m-%d %H:%M:%S")
+                - dt.datetime.now()
+            ).days
+    return {
+        "carrier": "iot_card",
+        "access_method": "iot_card",
+        "phone_masked": mask_card(str(snapshot.get("card") or "")),
+        "plan_name": clean_text(next((item["name"] for item in package_items), ""), 100)
+        or None,
+        "owner_name": None,
+        "tenure_months": None,
+        "star_level": None,
+        "balance_yuan": round_number(number(snapshot.get("balance"))),
+        "last_month_spend_yuan": None,
+        "current_spend_yuan": None,
+        "current_spend_period": None,
+        "current_spend_as_of": None,
+        "points": None,
+        "flow": {
+            "general_used_gb": round_number(used_mb / MB_PER_GB),
+            "general_total_gb": round_number(total_mb / MB_PER_GB),
+            "general_remaining_gb": round_number((free_mb or 0.0) / MB_PER_GB),
+            "directed_used_gb": 0.0,
+            "directed_total_gb": 0.0,
+            "directed_remaining_gb": 0.0,
+            "regional_used_gb": None,
+            "regional_total_gb": None,
+            "regional_remaining_gb": None,
+            "general_unlimited": unlimited,
+        },
+        "monthly_used_gb": None,
+        "voice": None,
+        "sms_usage": None,
+        "packages": package_items,
+        "cloud_card": {
+            "provider_id": provider,
+            "provider_name": PROVIDER_NAMES[provider],
+            "card_no_masked": mask_card(str(snapshot.get("card") or "")),
+            "iccid": clean_text(snapshot.get("iccid"), 40) or None,
+            "series_name": series_name or None,
+            "expires_at": expires,
+            "days_left": days_left,
+            "status_text": status_map.get(snapshot.get("state")),
+            "real_name_text": realname_map.get(snapshot.get("officialRealName")),
+            "real_used_gb": round_number(real_used_mb / MB_PER_GB)
+            if real_used_mb is not None
+            else None,
+            "real_total_gb": round_number(real_total_mb / MB_PER_GB)
+            if real_total_mb is not None
+            else None,
+            "real_remaining_gb": round_number(real_remaining_mb / MB_PER_GB)
+            if real_remaining_mb is not None
+            else None,
+            "refreshed_at": clean_text(snapshot.get("flowRefreshTime"), 50) or None,
+            "orders": order_items,
+        },
+        "warnings": warnings,
+    }
+
+
+def account_id(provider: str, identity: str) -> str:
+    normalized = digits(identity) if provider in {"mobile", "unicom"} else clean_text(identity, 40)
+    return hashlib.sha256(f"{provider}\0{normalized}".encode()).hexdigest()[:20]
+
+
+def account_identity(account: dict) -> str:
+    return clean_text(decrypt_secret(account.get("identity_enc"), ""), 80)
+
+
+def account_display(account: dict) -> str:
+    identity = account_identity(account)
+    return (
+        mask_phone(identity)
+        if account.get("provider") in {"mobile", "unicom"}
+        else mask_card(identity)
+    )
+
+
+def get_account(state: dict, identifier: str) -> tuple[str, dict]:
+    account = obj(state.get("accounts", {}).get(identifier))
+    if not account:
+        raise UserError("账号不存在或已删除")
+    return identifier, account
+
+
+def create_or_update_account(
+    state: dict, provider: str, identity: str, label: str
+) -> tuple[str, dict]:
+    if provider not in PROVIDER_NAMES:
+        raise UserError("不支持的账号类型")
+    identity = digits(identity) if provider in {"mobile", "unicom"} else clean_text(identity, 40)
+    if provider in {"mobile", "unicom"} and not re.fullmatch(r"1[3-9]\d{9}", identity):
+        raise UserError("请输入正确的 11 位手机号")
+    if provider in {"cloud", "xj"} and not re.fullmatch(r"[A-Za-z0-9_-]{4,40}", identity):
+        raise UserError("请输入正确的充值号")
+    identifier = account_id(provider, identity)
+    current = obj(state["accounts"].get(identifier))
+    merged = {
+        "id": identifier,
+        "provider": provider,
+        "label": clean_text(label, 40) or PROVIDER_NAMES[provider],
+        "identity_enc": encrypt_secret(identity),
+        "session_enc": current.get("session_enc", ""),
+        "usage": current.get("usage"),
+        "cached_at": current.get("cached_at"),
+        "last_ok_at": current.get("last_ok_at"),
+        "last_error": current.get("last_error"),
+        "auto_enabled": bool(current.get("auto_enabled", False)),
+        "auto_last_attempt": current.get("auto_last_attempt", 0),
+        "auto_last_check": current.get("auto_last_check", 0),
+        "auto_last_success": current.get("auto_last_success", 0),
+    }
+    if current.get("label") and not clean_text(label, 40):
+        merged["label"] = current["label"]
+    state["accounts"][identifier] = merged
+    state["active_account"] = identifier
+    return identifier, merged
+
+
+def store_session(account: dict, session: dict) -> None:
+    account["session_enc"] = encrypt_secret(session)
+
+
+def load_session(account: dict) -> dict:
+    return obj(decrypt_secret(account.get("session_enc"), {}))
+
+
+def store_usage(account: dict, usage: dict) -> None:
+    account["usage"] = usage
+    account["cached_at"] = now_ts()
+    account["last_ok_at"] = account["cached_at"]
+    account["last_error"] = ""
+
+
+def public_account(account: dict) -> dict:
+    provider = str(account.get("provider") or "")
+    return {
+        "id": account.get("id"),
+        "provider": provider,
+        "provider_name": PROVIDER_NAMES.get(provider, provider),
+        "label": clean_text(account.get("label"), 40),
+        "identity_masked": account_display(account),
+        "ready": bool(account.get("session_enc")),
+        "has_usage": bool(account.get("usage")),
+        "cached_at": account.get("cached_at"),
+        "last_ok_at": account.get("last_ok_at"),
+        "last_error": clean_text(account.get("last_error"), 160) or None,
+        "auto_enabled": bool(account.get("auto_enabled")),
+        "auto_last_success": account.get("auto_last_success"),
+    }
+
+
+def refresh_account_into_state(identifier: str, force_login: bool = False) -> dict:
+    state = load_state()
+    _, account = get_account(state, identifier)
+    provider = account.get("provider")
+    identity = account_identity(account)
+    if provider == "mobile":
+        session = load_session(account)
+        jar = restore_cookies(session.get("cookies"))
+        opener = opener_with(jar)
+        raw_map: dict[str, dict] = {}
+        auth_failure = False
+        for name, path in MOBILE_ENDPOINTS.items():
+            try:
+                payload = mobile_post(opener, path, {"cellNum": identity})
+                mobile_require_ok(payload, name)
+                raw_map[name] = payload
+            except AuthRequired:
+                auth_failure = True
+                break
+            except UserError as error:
+                if (
+                    "HTTP 409" in str(error)
+                    or "400006" in str(error)
+                    or "登录" in str(error)
+                ):
+                    auth_failure = True
+                    break
+                raw_map[name] = {"__error": clean_text(error, 120)}
+        if auth_failure:
+            raise AuthRequired("中国移动会话已失效，请重新获取短信验证码")
+        usage = parse_mobile_usage(raw_map, identity)
+        session["cookies"] = save_cookies(jar)
+        session.pop("pending", None)
+        session["mode"] = "mobile"
+        store_session(account, session)
+    elif provider == "unicom":
+        session = load_session(account)
+        jar = restore_cookies(session.get("cookies"))
+        opener = opener_with(jar)
+        if session.get("mode") == "sms":
+            usage = unicom_fetch_sms_usage(opener, jar, identity)
+        else:
+            if session.get("mode") == "password" and not list(jar):
+                unicom_renew(opener, session)
+            package_payload, balance_payload, jar = fetch_unicom(opener, jar)
+            usage = parse_unicom_usage(package_payload, balance_payload, identity)
+        session["cookies"] = save_cookies(jar)
+        store_session(account, session)
+    elif provider in {"cloud", "xj"}:
+        session = load_session(account)
+        jar = restore_cookies(session.get("cookies"))
+        opener = opener_with(jar)
+        usage, jar, series = fetch_cloud(provider, opener, jar)
+        session["cookies"] = save_cookies(jar)
+        session["series"] = series
+        session["mode"] = provider
+        store_session(account, session)
+    else:
+        raise UserError("未知账号类型")
+    store_usage(account, usage)
+    state["active_account"] = identifier
+    with state_lock():
+        latest = load_state()
+        latest["accounts"][identifier] = account
+        latest["active_account"] = identifier
+        save_state(latest)
+    return usage
+
+
+def mobile_send_code(phone: str, label: str) -> dict:
+    normalized = digits(phone)
+    if not re.fullmatch(r"1[3-9]\d{9}", normalized):
+        raise UserError("请输入正确的 11 位移动手机号")
+    state = load_state()
+    identifier = account_id("mobile", normalized)
+    rates = [int(item) for item in arr(state.get("rate", {}).get(identifier))]
+    cutoff = now_ts() - 86400
+    rates = [item for item in rates if item >= cutoff]
+    daily_limit = clamp_int(
+        obj(state.get("auto")).get("daily_sms_limit"), 1, 10, 3
+    )
+    if rates and now_ts() - rates[-1] < 60:
+        raise UserError(f"验证码发送过于频繁，请 {60 - (now_ts() - rates[-1])} 秒后再试")
+    if len(rates) >= daily_limit:
+        raise UserError(f"今日已发送 {daily_limit} 次验证码，请明天再试或调高每日额度")
+    jar = http.cookiejar.CookieJar()
+    opener = opener_with(jar)
+    payload = mobile_post(opener, MOBILE_SEND, {"cellNum": normalized, "channlCode": "2"})
+    mobile_require_ok(payload, "发送验证码")
+    sx = clean_text(obj(payload.get("rspBody")).get("sx"), 500)
+    if not sx:
+        raise UserError("验证码已请求，但运营商没有返回登录票据")
+    identifier, account = create_or_update_account(state, "mobile", normalized, label)
+    store_session(
+        account,
+        {
+            "mode": "mobile_pending",
+            "pending": {"phone": normalized, "sx": sx, "sent_at": now_ts()},
+            "cookies": save_cookies(jar),
+        },
+    )
+    state["rate"][identifier] = rates + [now_ts()]
+    state["active_account"] = identifier
+    save_state(state)
+    return {
+        "account": public_account(account),
+        "expires_in": 300,
+        "message": "验证码已发送，请完成短信验证",
+    }
+
+
+def mobile_verify_code(identifier: str, code: str) -> dict:
+    code = digits(code)
+    if not re.fullmatch(r"\d{4,8}", code):
+        raise UserError("请输入短信中的验证码")
+    state = load_state()
+    _, account = get_account(state, identifier)
+    if account.get("provider") != "mobile":
+        raise UserError("该账号不是中国移动账号")
+    session = load_session(account)
+    pending = obj(session.get("pending"))
+    if not pending or now_ts() - int(pending.get("sent_at") or 0) > 300:
+        raise UserError("验证码已过期，请重新获取")
+    phone = digits(pending.get("phone"))
+    sx = clean_text(pending.get("sx"), 500)
+    jar = restore_cookies(session.get("cookies"))
+    opener = opener_with(jar)
+    payload = mobile_post(
+        opener,
+        MOBILE_LOGIN,
+        {
+            "cellNum": phone,
+            "verifyCode": code,
+            "sendSmsFlag": 0,
+            "sx": sx,
+            "channlCode": "2",
+        },
+    )
+    mobile_require_ok(payload, "登录")
+    session = {"mode": "mobile", "cookies": save_cookies(jar)}
+    store_session(account, session)
+    with state_lock():
+        latest = load_state()
+        latest["accounts"][identifier] = account
+        save_state(latest)
+    usage = refresh_account_into_state(identifier)
+    latest = load_state()
+    return {
+        "usage": usage,
+        "account": public_account(latest["accounts"][identifier]),
+        "message": "移动账号登录成功",
+    }
+
+
+def unicom_renew(opener: urllib.request.OpenerDirector, session: dict) -> None:
+    token_online = clean_text(session.get("token_online"), 4096)
+    app_id = clean_text(session.get("app_id"), 300)
+    if not token_online or not app_id:
+        raise AuthRequired("联通会话已失效，请重新登录")
+    payload = unicom_json_call(
+        opener,
+        UNICOM_ONLINE_URL,
+        {
+            "token_online": token_online,
+            "appId": app_id,
+            "version": UNICOM_VERSION,
+            "deviceModel": "Android",
+        },
+    )
+    code = clean_text(payload.get("code"), 20)
+    if code and code not in {"0", "0000"}:
+        raise AuthRequired("联通会话续期失败，请重新登录")
+    new_token = clean_text(payload.get("token_online"), 4096)
+    if new_token:
+        session["token_online"] = new_token
+
+
+def unicom_password_login(phone: str, password: str, label: str) -> dict:
+    normalized = digits(phone)
+    if not re.fullmatch(r"1[3-9]\d{9}", normalized):
+        raise UserError("请输入正确的 11 位联通手机号")
+    password = clean_text(password, 32)
+    if not password:
+        raise UserError("请输入联通服务密码")
+    state = load_state()
+    app_id = unicom_login_identity(state)["app_id"]
+    form = {
+        "version": UNICOM_VERSION,
+        "mobile": unicom_rsa(normalized),
+        "reqtime": dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "deviceModel": "Android",
+        "netWay": "Wifi",
+        "isR4": "0",
+        "password": unicom_rsa(password),
+        "appId": app_id,
+    }
+    jar = http.cookiejar.CookieJar()
+    opener = opener_with(jar)
+    payload = unicom_json_call(opener, UNICOM_LOGIN_URL, form)
+    code = clean_text(payload.get("code"), 20)
+    if code not in {"0", "0000"}:
+        description = clean_text(payload.get("dsc") or payload.get("desc"), 100)
+        if code == "2" and "短信" in description:
+            raise UserError("联通要求改用短信或扫码登录，请使用扫码入口")
+        raise UserError(
+            "联通登录失败：服务密码错误或账号需要短信验证"
+            if code in {"2", "3102", "4102", "4103"}
+            else f"联通登录失败（code={code}：{description or '未返回原因'}）"
+        )
+    token_online = clean_text(payload.get("token_online"), 4096)
+    if not token_online:
+        raise UserError("联通登录成功但没有返回会话票据")
+    session = {
+        "mode": "password",
+        "token_online": token_online,
+        "app_id": app_id,
+        "cookies": [],
+    }
+    unicom_renew(opener, session)
+    session["cookies"] = save_cookies(jar)
+    identifier, account = create_or_update_account(
+        state, "unicom", normalized, label
+    )
+    store_session(account, session)
+    state["accounts"][identifier] = account
+    save_state(state)
+    usage = refresh_account_into_state(identifier)
+    latest = load_state()
+    return {
+        "usage": usage,
+        "account": public_account(latest["accounts"][identifier]),
+        "message": "联通账号登录成功",
+    }
+
+
+def unicom_token_login(phone: str, token: str, label: str) -> dict:
+    normalized_phone = digits(phone)
+    if normalized_phone and not re.fullmatch(r"1[3-9]\d{9}", normalized_phone):
+        raise UserError("手机号格式不正确；也可以留空后仅使用 ecs_token")
+    token = clean_text(token, 8192)
+    if len(token) <= 20 or not re.fullmatch(r"[\x21-\x7e]+", token):
+        raise UserError("请输入有效的 ecs_token")
+
+    jar = http.cookiejar.CookieJar()
+    set_domain_cookie(jar, "ecs_token", token)
+    opener = opener_with(jar)
+    try:
+        usage = unicom_fetch_sms_usage(opener, jar, normalized_phone)
+    except UserError:
+        try:
+            package_payload, balance_payload, jar = fetch_unicom(opener, jar)
+            usage = parse_unicom_usage(
+                package_payload, balance_payload, normalized_phone
+            )
+        except UserError:
+            raise UserError("ecs_token 无效、已过期或当前网络无法验证") from None
+
+    state = load_state()
+    if normalized_phone:
+        identifier, account = create_or_update_account(
+            state, "unicom", normalized_phone, label
+        )
+    else:
+        identifier = "unicom-token-" + hashlib.sha256(token.encode()).hexdigest()[:20]
+        current = obj(state["accounts"].get(identifier))
+        account = {
+            "id": identifier,
+            "provider": "unicom",
+            "label": clean_text(label, 40)
+            or current.get("label")
+            or "联通 Token",
+            "identity_enc": current.get("identity_enc", ""),
+            "session_enc": "",
+            "usage": current.get("usage"),
+            "cached_at": current.get("cached_at"),
+            "last_ok_at": current.get("last_ok_at"),
+            "last_error": "",
+            "auto_enabled": False,
+            "auto_last_attempt": 0,
+            "auto_last_check": 0,
+            "auto_last_success": 0,
+        }
+    store_session(
+        account,
+        {
+            "mode": "token",
+            "ecs_token": token,
+            "phone": normalized_phone,
+            "cookies": save_cookies(jar),
+        },
+    )
+    store_usage(account, usage)
+    state["accounts"][identifier] = account
+    state["active_account"] = identifier
+    save_state(state)
+    return {
+        "usage": usage,
+        "account": public_account(account),
+        "message": "联通 Token 登录成功",
+    }
+
+
+def unicom_export_token(identifier: str) -> dict:
+    state = load_state()
+    _, account = get_account(state, identifier)
+    if account.get("provider") != "unicom":
+        raise UserError("只有联通账号支持导出 ecs_token")
+    session = load_session(account)
+    token = clean_text(session.get("ecs_token"), 8192)
+    if not token:
+        token = clean_text(
+            cookie_value(restore_cookies(session.get("cookies")), "ecs_token"),
+            8192,
+        )
+        if token:
+            session["ecs_token"] = token
+            store_session(account, session)
+            state["accounts"][identifier] = account
+            save_state(state)
+    if len(token) <= 20 or not re.fullmatch(r"[\x21-\x7e]+", token):
+        raise UserError("当前联通会话没有可导出的 ecs_token，请重新登录")
+    return {
+        "ok": True,
+        "token": token,
+        "label": clean_text(account.get("label"), 40),
+        "phone_masked": account_display(account),
+        "mode": clean_text(session.get("mode"), 40),
+        "exported_at": now_ts(),
+        "message": "ecs_token 已导出",
+    }
+
+
+def unicom_send_sms(phone: str, label: str) -> dict:
+    normalized = digits(phone)
+    if not re.fullmatch(r"1[3-9]\d{9}", normalized):
+        raise UserError("请输入正确的 11 位联通手机号")
+    identifier = account_id("unicom", normalized)
+    state = load_state()
+    rates = [
+        int(item)
+        for item in arr(obj(state.get("rate")).get(identifier))
+        if int(item) >= now_ts() - 86400
+    ]
+    if rates and now_ts() - rates[-1] < 60:
+        raise UserError(
+            f"联通验证码发送过于频繁，请 {60 - (now_ts() - rates[-1])} 秒后再试"
+        )
+    if len(rates) >= 5:
+        raise UserError("这个联通号码今天已发送 5 次验证码，请明天再试")
+
+    login_identity = unicom_login_identity(state)
+    device_id = login_identity["device_id"]
+    app_id = login_identity["app_id"]
+    jar = http.cookiejar.CookieJar()
+    opener = opener_with(jar)
+    fields = unicom_sms_device_fields(normalized, device_id, app_id)
+    fields.update({"send_flag": "", "loginCodeLen": "6"})
+    payload = unicom_sms_call(opener, UNICOM_SMS_SEND_PATH, fields)
+    challenge = unicom_sms_challenge(payload)
+    if challenge:
+        raise UserError(challenge)
+    code = clean_text(payload.get("rsp_code") or payload.get("code"), 30)
+    if code in {"ECS99998", "ECS99999"}:
+        identifier, account = create_or_update_account(
+            state, "unicom", normalized, label
+        )
+        verification = unicom_store_verification(
+            account,
+            action="send",
+            phone=normalized,
+            app_id=app_id,
+            device_id=device_id,
+            fields=fields,
+            jar=jar,
+            payload=payload,
+        )
+        state["accounts"][identifier] = account
+        state["active_account"] = identifier
+        save_state(state)
+        return {
+            "account": public_account(account),
+            "verification": verification,
+            "message": "请完成联通安全验证后发送短信验证码",
+        }
+    if code not in {"0", "0000", "00", "success"}:
+        message = clean_text(
+            payload.get("rsp_desc")
+            or payload.get("dsc")
+            or payload.get("desc")
+            or payload.get("msg"),
+            100,
+        )
+        raise UserError(f"联通验证码发送失败（{code or '?'}：{message or '未返回原因'}）")
+
+    identifier, account = create_or_update_account(
+        state, "unicom", normalized, label
+    )
+    store_session(
+        account,
+        {
+            "mode": "unicom_sms_pending",
+            "app_id": app_id,
+            "device_id": device_id,
+            "phone": normalized,
+            "sent_at": now_ts(),
+            "cookies": save_cookies(jar),
+        },
+    )
+    state["rate"][identifier] = rates + [now_ts()]
+    state["active_account"] = identifier
+    save_state(state)
+    return {
+        "account": public_account(account),
+        "expires_in": 300,
+        "message": "联通验证码已发送",
+    }
+
+
+def unicom_resume_sms_send(
+    identifier: str,
+    verification_id: str,
+    result_token: str,
+) -> dict:
+    result_token = clean_text(result_token, 4096)
+    if not re.fullmatch(r"[\x21-\x7e]{1,4096}", result_token):
+        raise UserError("联通安全验证结果无效，请重新验证")
+    state = load_state()
+    _, account = get_account(state, identifier)
+    session = load_session(account)
+    pending = obj(session.get("verification"))
+    if (
+        pending.get("id") != verification_id
+        or pending.get("action") != "send"
+        or now_ts() - int(pending.get("created_at") or 0) > 300
+    ):
+        raise UserError("联通安全验证已过期，请重新获取验证码")
+    phone = digits(pending.get("phone"))
+    device_id = clean_text(pending.get("device_id"), 64)
+    fields = {str(key): str(value) for key, value in obj(pending.get("fields")).items()}
+    fields["resultToken"] = result_token
+    jar = restore_cookies(pending.get("cookies"))
+    opener = opener_with(jar)
+    payload = unicom_sms_call(opener, UNICOM_SMS_SEND_PATH, fields)
+    challenge = unicom_sms_challenge(payload)
+    if challenge:
+        raise UserError(challenge)
+    code = clean_text(payload.get("rsp_code") or payload.get("code"), 30)
+    if code in {"ECS99998", "ECS99999"}:
+        raise UserError("联通仍要求额外安全验证，请改用扫码登录")
+    if code not in {"0", "0000", "00", "success"}:
+        message = clean_text(
+            payload.get("rsp_desc")
+            or payload.get("dsc")
+            or payload.get("desc")
+            or payload.get("msg"),
+            100,
+        )
+        raise UserError(f"联通验证码发送失败（{code or '?'}：{message or '未返回原因'}）")
+    session = {
+        "mode": "unicom_sms_pending",
+        "app_id": clean_text(pending.get("app_id"), 256),
+        "device_id": device_id,
+        "phone": phone,
+        "sent_at": now_ts(),
+        "cookies": save_cookies(jar),
+    }
+    store_session(account, session)
+    rates = [
+        int(item)
+        for item in arr(obj(state.get("rate")).get(identifier))
+        if int(item) >= now_ts() - 86400
+    ]
+    state["rate"][identifier] = rates + [now_ts()]
+    state["accounts"][identifier] = account
+    state["active_account"] = identifier
+    save_state(state)
+    return {
+        "account": public_account(account),
+        "expires_in": 300,
+        "message": "联通验证码已发送",
+    }
+
+
+def unicom_sms_query(
+    opener: urllib.request.OpenerDirector,
+    url: str,
+    desmobile: str,
+) -> dict:
+    user_agent = UNICOM_SMS_UA.replace("desmobile:", f"desmobile:{desmobile}")
+    status, raw, _ = http_call(
+        opener,
+        url,
+        data=b"",
+        headers={
+            "User-Agent": user_agent,
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Encoding": "identity",
+        },
+    )
+    text = raw.decode("utf-8", errors="replace").strip()
+    if text in {"999998", "999999"}:
+        raise AuthRequired("联通短信会话尚未取得余量查询权限")
+    if status < 200 or status >= 300:
+        raise UserError(f"联通余量接口失败（HTTP {status}）")
+    try:
+        return obj(json.loads(text))
+    except ValueError:
+        raise UserError("联通余量接口返回格式异常") from None
+
+
+def unicom_fetch_sms_usage(
+    opener: urllib.request.OpenerDirector,
+    jar: http.cookiejar.CookieJar,
+    phone: str,
+) -> dict:
+    warnings: list[str] = []
+    try:
+        package_payload = unicom_sms_query(opener, UNICOM_PACKAGE_URL, phone)
+    except UserError as error:
+        package_payload = {}
+        warnings.append(safe_message(error, 100))
+    try:
+        balance_payload = unicom_sms_query(opener, UNICOM_BALANCE_URL, phone)
+    except UserError as error:
+        balance_payload = {}
+        warnings.append(safe_message(error, 100))
+    if not package_payload and not balance_payload:
+        raise AuthRequired("联通短信登录成功，但余量接口仍要求额外验证")
+    usage = parse_unicom_usage(package_payload, balance_payload, phone)
+    usage["warnings"] = warnings + arr(usage.get("warnings"))
+    return usage
+
+
+def unicom_verify_sms(identifier: str, code: str) -> dict:
+    code = digits(code)
+    if not re.fullmatch(r"\d{4,8}", code):
+        raise UserError("请输入联通短信验证码")
+    state = load_state()
+    _, account = get_account(state, identifier)
+    if account.get("provider") != "unicom":
+        raise UserError("该账号不是联通账号")
+    session = load_session(account)
+    if session.get("mode") != "unicom_sms_pending":
+        raise UserError("没有待验证的联通短信登录")
+    if now_ts() - int(session.get("sent_at") or 0) > 300:
+        raise UserError("联通验证码已过期，请重新发送")
+    phone = digits(session.get("phone") or account_identity(account))
+    device_id = clean_text(session.get("device_id"), 64)
+    app_id = clean_text(session.get("app_id"), 256) or unicom_login_identity(state)[
+        "app_id"
+    ]
+    if not re.fullmatch(r"1[3-9]\d{9}", phone) or not device_id:
+        raise UserError("联通短信登录状态异常，请重新发送验证码")
+
+    jar = restore_cookies(session.get("cookies"))
+    opener = opener_with(jar)
+    fields = unicom_sms_device_fields(phone, device_id, app_id)
+    fields.update(
+        {
+            "password": unicom_rsa(code),
+            "loginStyle": "0",
+            "provinceChanel": "general",
+            "timestamp": dt.datetime.now().strftime("%Y%m%d%H%M%S"),
+        }
+    )
+    payload = unicom_sms_call(opener, UNICOM_SMS_LOGIN_PATH, fields)
+    challenge = unicom_sms_challenge(payload)
+    if challenge:
+        raise UserError(challenge)
+    result_code = clean_text(payload.get("code"), 30)
+    if result_code not in {"0", "0000", "00", "success"}:
+        message = clean_text(
+            payload.get("rsp_desc")
+            or payload.get("dsc")
+            or payload.get("desc")
+            or payload.get("msg"),
+            100,
+        )
+        raise UserError(f"联通短信登录失败（{result_code or '?'}：{message or '未返回原因'}）")
+    ecs_token = clean_text(payload.get("ecs_token"), 8192) or cookie_value(
+        jar, "ecs_token"
+    )
+    if not ecs_token:
+        raise UserError("联通短信登录成功，但没有返回会话令牌")
+    set_domain_cookie(jar, "ecs_token", ecs_token)
+    token_online = clean_text(
+        payload.get("token_online") or payload.get("onlin_token"), 8192
+    )
+    # The send/login flow already knows the exact phone number that received the
+    # SMS. Some successful responses return a non-phone desmobile value, so it
+    # must not overwrite the verified account identity.
+    desmobile = phone
+    final_session = {
+        "mode": "sms",
+        "ecs_token": ecs_token,
+        "token_online": token_online,
+        "device_id": device_id,
+        "app_id": app_id,
+        "phone": phone,
+        "cookies": save_cookies(jar),
+    }
+    account["identity_enc"] = encrypt_secret(desmobile)
+    store_session(account, final_session)
+    state["accounts"][identifier] = account
+    state["active_account"] = identifier
+    save_state(state)
+
+    usage = unicom_fetch_sms_usage(opener, jar, desmobile)
+    final_session["cookies"] = save_cookies(jar)
+    store_session(account, final_session)
+    store_usage(account, usage)
+    state = load_state()
+    state["accounts"][identifier] = account
+    save_state(state)
+    return {
+        "usage": usage,
+        "account": public_account(account),
+        "message": "联通短信登录成功",
+    }
+
+
+def unicom_qr_start(label: str, identity: str = "") -> dict:
+    manual_phone = digits(identity)
+    if manual_phone and not re.fullmatch(r"1[3-9]\d{9}", manual_phone):
+        raise UserError("扫码登录时填写的联通手机号格式不正确")
+    jar = http.cookiejar.CookieJar()
+    opener = opener_with(jar)
+    status, image, _ = http_call(
+        opener,
+        f"https://uac.10010.com/oauth2/genqr?timestamp={int(time.time() * 1000)}",
+        headers={
+            "User-Agent": UNICOM_UA,
+            "Referer": "https://uac.10010.com/portal/homeLogin",
+        },
+    )
+    if status < 200 or status >= 300 or not image:
+        raise UserError(f"联通二维码获取失败（HTTP {status}）")
+    identifier = hashlib.sha256(f"unicom-qr\0{secrets.token_hex(16)}".encode()).hexdigest()[:20]
+    state = load_state()
+    account = {
+        "id": identifier,
+        "provider": "unicom",
+        "label": clean_text(label, 40) or "中国联通",
+        "identity_enc": encrypt_secret(manual_phone) if manual_phone else "",
+        "session_enc": "",
+        "usage": None,
+        "cached_at": None,
+        "last_ok_at": None,
+        "last_error": "",
+        "auto_enabled": False,
+        "auto_last_attempt": 0,
+        "auto_last_check": 0,
+        "auto_last_success": 0,
+    }
+    store_session(
+        account,
+        {
+            "mode": "unicom_qr_pending",
+            "started_at": now_ts(),
+            "manual_phone": manual_phone,
+            "cookies": save_cookies(jar),
+        },
+    )
+    state["accounts"][identifier] = account
+    state["active_account"] = identifier
+    save_state(state)
+    return {
+        "account": public_account(account),
+        "qr_data": "data:image/png;base64," + base64.b64encode(image).decode("ascii"),
+        "expires_in": 150,
+        "message": "请使用中国联通 App 扫码并确认",
+    }
+
+
+def exchange_unicom_mall(
+    opener: urllib.request.OpenerDirector, jar: http.cookiejar.CookieJar
+) -> str | None:
+    jut = next((cookie.value for cookie in jar if cookie.name == "JUT"), "")
+    if not jut:
+        return None
+    uop = next(
+        (cookie.value for cookie in jar if cookie.name == "_uop_id"), ""
+    )
+    payload = unicom_json_call(
+        opener,
+        f"https://www.10010.com/mall/service/check/checklogin?{int(time.time() * 1000)}",
+        {"_uop_id": uop, "jutThird": jut},
+        referer="https://imgxx.client.10010.com/",
+        headers={
+            "User-Agent": UNICOM_UA,
+            "Origin": "https://imgxx.client.10010.com",
+        },
+    )
+    raw_login = payload.get("isLogin")
+    login = str(raw_login).lower() in {"true", "1"}
+    if not login:
+        raise UserError("联通商城会话换取失败")
+    return clean_text(obj(payload.get("userInfo")).get("usernumber"), 30) or None
+
+
+def complete_unicom_qr(
+    identifier: str, account: dict, session: dict
+) -> dict:
+    jar = restore_cookies(session.get("cookies"))
+    unisecid = next(
+        (cookie.value for cookie in jar if cookie.name == "unisecid"), ""
+    )
+    if not unisecid:
+        raise UserError("联通二维码会话已失效，请刷新二维码")
+    opener = opener_with(jar)
+    callback = f"jQuery{int(time.time() * 1000)}_{random.randrange(1000, 10000)}"
+    _, raw, _ = http_call(
+        opener,
+        "https://uac.10010.com/portal/qrcode/qrcode_logon"
+        f"?callback={callback}&secsnid={urllib.parse.quote(unisecid)}"
+        f"&_={int(time.time() * 1000)}",
+        headers={
+            "User-Agent": UNICOM_UA,
+            "Referer": "https://uac.10010.com/portal/homeLogin",
+            "X-Requested-With": "XMLHttpRequest",
+        },
+    )
+    data = unescape_jsonp(raw.decode("utf-8", errors="replace"))
+    if str(data.get("resultcode")) != "01":
+        raise UserError(f"联通二维码换票失败（{clean_text(data.get('resultcode'), 20)}）")
+    piw = clean_text(data.get("piw"), 4096)
+    if piw:
+        jar.set_cookie(
+            http.cookiejar.Cookie(
+                0,
+                "piw",
+                piw,
+                None,
+                False,
+                ".10010.com",
+                True,
+                True,
+                "/",
+                True,
+                True,
+                None,
+                False,
+                None,
+                None,
+                {},
+                False,
+            )
+        )
+    http_call(
+        opener,
+        "https://uac.10010.com/wologin/redi?redirectURL=https://m.client.10010.com/",
+        headers={"User-Agent": UNICOM_UA},
+    )
+    mall_phone = exchange_unicom_mall(opener, jar)
+    package_payload, balance_payload, jar = fetch_unicom(opener, jar)
+    phone = digits(session.get("manual_phone") or "")
+    if not phone:
+        phone = digits(mall_phone or "")
+    if not phone:
+        phone = next(
+        (
+            cookie.value
+            for cookie in jar
+            if cookie.name.lower() in {"usernumber", "unicommalluid"}
+        ),
+        "",
+    )
+    phone = digits(phone)
+    if not re.fullmatch(r"1[3-9]\d{9}", phone):
+        phone = ""
+    account["identity_enc"] = encrypt_secret(phone)
+    usage = parse_unicom_usage(package_payload, balance_payload, phone or "联通账号")
+    session["mode"] = "unicom_qr"
+    session["cookies"] = save_cookies(jar)
+    store_session(account, session)
+    store_usage(account, usage)
+    state = load_state()
+    state["accounts"][identifier] = account
+    state["active_account"] = identifier
+    save_state(state)
+    return usage
+
+
+def unicom_qr_poll(identifier: str) -> dict:
+    state = load_state()
+    _, account = get_account(state, identifier)
+    if account.get("provider") != "unicom":
+        raise UserError("该账号不是联通账号")
+    session = load_session(account)
+    if session.get("mode") != "unicom_qr_pending":
+        if account.get("usage"):
+            return {"state": "ready", "usage": account["usage"]}
+        raise UserError("没有待处理的联通二维码")
+    if now_ts() - int(session.get("started_at") or 0) > 150:
+        raise UserError("二维码已过期，请刷新")
+    jar = restore_cookies(session.get("cookies"))
+    unisecid = next(
+        (cookie.value for cookie in jar if cookie.name == "unisecid"), ""
+    )
+    if not unisecid:
+        raise UserError("二维码会话缺少票据，请刷新")
+    opener = opener_with(jar)
+    callback = f"jQuery{int(time.time() * 1000)}_{random.randrange(1000, 10000)}"
+    status, raw, _ = http_call(
+        opener,
+        "https://uac.10010.com/qrcode/qrcode_hbt"
+        f"?callback={callback}&secsnid={urllib.parse.quote(unisecid)}"
+        f"&_={int(time.time() * 1000)}",
+        headers={
+            "User-Agent": UNICOM_UA,
+            "Referer": "https://uac.10010.com/portal/homeLogin",
+            "X-Requested-With": "XMLHttpRequest",
+        },
+    )
+    if status < 200 or status >= 300:
+        raise UserError(f"联通二维码心跳失败（HTTP {status}）")
+    data = unescape_jsonp(raw.decode("utf-8", errors="replace"))
+    result = str(data.get("resultcode") or "")
+    if result == "00":
+        return {"state": "waiting", "message": "等待扫码"}
+    if result == "10":
+        return {"state": "scanned", "message": "已扫码，请在手机上确认"}
+    if result != "11":
+        message = (
+            "二维码已超时"
+            if result == "02"
+            else "该账号需先在联通 App 登录后再扫码"
+            if result == "14"
+            else "扫码登录失败，请刷新二维码"
+        )
+        raise UserError(message)
+    session["cookies"] = save_cookies(jar)
+    usage = complete_unicom_qr(identifier, account, session)
+    return {"state": "ready", "usage": usage, "message": "联通扫码登录成功"}
+
+
+def cloud_login(provider: str, card_no: str, verify: str, label: str) -> dict:
+    provider = "cloud" if provider == "cloud" else "xj"
+    card_no = clean_text(card_no, 40)
+    if len(digits(card_no)) < 4:
+        raise UserError("请输入正确的物联卡充值号")
+    verify = digits(verify)
+    if provider == "xj" and not re.fullmatch(r"\d{4}", verify):
+        raise UserError("小鲸卡需要填写绑定手机号后四位")
+    jar = http.cookiejar.CookieJar()
+    opener = opener_with(jar)
+    form = {"card": card_no}
+    if verify:
+        form["verify"] = verify
+    series = cloud_api(opener, CLOUD_BASE[provider], "/app/card/login", form=form)
+    usage, jar, series = fetch_cloud(provider, opener, jar, series)
+    state = load_state()
+    identifier, account = create_or_update_account(
+        state, provider, card_no, label
+    )
+    store_session(
+        account,
+        {
+            "mode": provider,
+            "cookies": save_cookies(jar),
+            "series": series,
+        },
+    )
+    store_usage(account, usage)
+    save_state(state)
+    return {
+        "usage": usage,
+        "account": public_account(account),
+        "message": f"{PROVIDER_NAMES[provider]}登录成功",
+    }
+
+
+def fetch_cloud(
+    provider: str,
+    opener: urllib.request.OpenerDirector,
+    jar: http.cookiejar.CookieJar,
+    series: dict | None = None,
+) -> tuple[dict, http.cookiejar.CookieJar, dict]:
+    base_url = CLOUD_BASE[provider]
+    warnings: list[str] = []
+    with contextlib.suppress(UserError):
+        cloud_api(opener, base_url, "/app/client/card/refresh")
+    snapshot = cloud_api(opener, base_url, "/app/client/card/get")
+    try:
+        plans = arr(
+            cloud_api(
+                opener,
+                base_url,
+                "/app/client/order/get/list?effectiveType=1&page=1&size=10",
+            ).get("list")
+        )
+    except UserError as error:
+        plans = []
+        warnings.append(clean_text(error, 100))
+    try:
+        orders = arr(
+            cloud_api(
+                opener,
+                base_url,
+                "/app/client/order/get/list?page=1&size=100",
+            ).get("list")
+        )
+    except UserError as error:
+        orders = []
+        warnings.append(clean_text(error, 100))
+    try:
+        real_data = cloud_api(
+            opener,
+            base_url,
+            "/app/client/invoice/submit/record/client/wait/order/list"
+            "?orderType=0&page=1&size=100",
+        )
+        real_orders = arr(real_data.get("setMealOrderList") or real_data.get("list"))
+    except UserError as error:
+        real_orders = []
+        warnings.append(clean_text(error, 100))
+    usage = parse_cloud_usage(
+        provider,
+        series,
+        snapshot,
+        [obj(item) for item in plans],
+        [obj(item) for item in orders],
+        [obj(item) for item in real_orders],
+        warnings,
+    )
+    return usage, jar, obj(series)
+
+
+def fetch_unicom(
+    opener: urllib.request.OpenerDirector,
+    jar: http.cookiejar.CookieJar,
+) -> tuple[dict, dict, http.cookiejar.CookieJar]:
+    has_jut = any(cookie.name == "JUT" for cookie in jar)
+    has_mall = any(cookie.name == "unicomMallUid" for cookie in jar)
+    if has_jut and not has_mall:
+        with contextlib.suppress(UserError):
+            exchange_unicom_mall(opener, jar)
+            has_mall = any(cookie.name == "unicomMallUid" for cookie in jar)
+    package_url = UNICOM_MXX_PACKAGE_URL if has_mall else UNICOM_PACKAGE_URL
+    balance_url = UNICOM_MXX_BALANCE_URL if has_mall else UNICOM_BALANCE_URL
+    package_payload = unicom_json_call(
+        opener, package_url, dict(UNICOM_FORM_EMPTY)
+    )
+    balance_payload = unicom_json_call(opener, balance_url, {})
+    return package_payload, balance_payload, jar
+
+
+def ubus_call(service: str, method: str, args: dict | None = None) -> dict:
+    if not shutil.which("ubus"):
+        raise UserError("设备缺少 ubus 接口")
+    command = ["ubus", "call", service, method]
+    if args is not None:
+        command.append(json.dumps(args, separators=(",", ":")))
+    result = subprocess.run(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        timeout=25,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise UserError("读取设备蜂窝信息失败")
+    try:
+        return obj(json.loads(result.stdout.decode("utf-8", errors="replace")))
+    except ValueError:
+        raise UserError("设备蜂窝接口返回格式异常") from None
+
+
+def sim_info() -> dict:
+    status = ubus_call("mu300dash", "status")
+    info = obj(status.get("info"))
+    modem = obj(info.get("modem"))
+    cell = obj(status.get("cell"))
+    operator = obj(cell.get("operator"))
+    ident = obj(cell.get("ident"))
+    plmn = clean_text(operator.get("plmn"), 12)
+    phone = digits(ident.get("msisdn"))
+    if not phone:
+        with contextlib.suppress(UserError):
+            reply = clean_text(
+                ubus_call(
+                    "mu300dash", "at", {"cmd": "AT+CNUM", "slot": "0"}
+                ).get("reply"),
+                1000,
+            )
+            match = re.search(r'"(\+?86\d{11}|\d{11})"', reply)
+            phone = digits(match.group(1)) if match else ""
+    if not phone:
+        with contextlib.suppress(UserError):
+            reply = clean_text(
+                ubus_call(
+                    "mu300dash", "at", {"cmd": "AT+CNUM", "slot": "0"}
+                ).get("reply"),
+                1000,
+            )
+            match = re.search(r'"(\+?86\d{11}|\d{11})"', reply)
+            phone = digits(match.group(1)) if match else ""
+    if phone.startswith("86") and len(phone) > 11:
+        phone = phone[-11:]
+    if plmn in MOBILE_PLMNS:
+        carrier = "mobile"
+        carrier_name = "中国移动"
+    elif plmn in UNICOM_PLMNS:
+        carrier = "unicom"
+        carrier_name = "中国联通"
+    elif plmn in TELECOM_PLMNS:
+        carrier = "telecom"
+        carrier_name = "中国电信"
+    else:
+        carrier = ""
+        carrier_name = "未识别"
+    sims = arr(modem.get("sims"))
+    slot = modem.get("data_sim", 0)
+    ready = any(
+        str(obj(item).get("slot")) == str(slot)
+        and str(obj(item).get("state")) == "ready"
+        for item in sims
+    )
+    supported = carrier == "mobile" and ready and bool(re.fullmatch(r"1[3-9]\d{9}", phone))
+    reason = None
+    if not ready:
+        reason = "当前 SIM 未就绪"
+    elif carrier != "mobile":
+        reason = f"自动登录仅支持中国移动（当前为{carrier_name}）"
+    elif not phone:
+        reason = "设备读不到当前 SIM 手机号，无法确认账号归属"
+    return {
+        "slot": slot,
+        "ready": ready,
+        "carrier": carrier or None,
+        "carrier_name": carrier_name,
+        "plmn": plmn,
+        "phone_masked": mask_phone(phone) if phone else None,
+        "phone": phone,
+        "supported_auto_login": supported,
+        "reason": reason,
+    }
+
+
+def account_matches_sim(account: dict, sim: dict) -> bool:
+    if account.get("provider") != "mobile" or sim.get("carrier") != "mobile":
+        return False
+    account_phone = digits(account_identity(account))
+    sim_phone = digits(sim.get("phone"))
+    return (
+        re.fullmatch(r"1[3-9]\d{9}", account_phone) is not None
+        and re.fullmatch(r"1[3-9]\d{9}", sim_phone) is not None
+        and account_phone[-11:] == sim_phone[-11:]
+    )
+
+
+def attempt_allowed(state: dict, identifier: str) -> bool:
+    auto = obj(state.get("auto"))
+    attempts = [
+        int(item)
+        for item in arr(obj(state.get("rate")).get(identifier))
+        if int(item) >= now_ts() - 86400
+    ]
+    return len(attempts) < clamp_int(auto.get("daily_sms_limit"), 1, 10, 3)
+
+
+def sms_messages() -> list[dict]:
+    payload = ubus_call(
+        "mu300dash", "sms_list", {"slot": "0", "page": "1"}
+    )
+    return [obj(item) for item in arr(payload.get("msgs"))]
+
+
+def sms_show(identifier: str) -> str:
+    payload = ubus_call(
+        "mu300dash", "sms_show", {"slot": "0", "id": identifier}
+    )
+    return clean_text(payload.get("text"), 8000)
+
+
+def wait_mobile_code_after(after_id: int, timeout: int = 90) -> str:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        for message in sms_messages():
+            if str(message.get("dir")) != "mt":
+                continue
+            raw_id = clean_text(message.get("id"), 40)
+            numeric_id = int(digits(raw_id) or 0)
+            if numeric_id <= after_id:
+                continue
+            peer = clean_text(message.get("peer"), 30)
+            preview = clean_text(message.get("preview"), 200)
+            if "10086" not in peer and "中国移动" not in preview:
+                continue
+            text = sms_show(raw_id)
+            if "10086" not in text and "中国移动" not in text:
+                continue
+            match = re.search(r"(?<!\d)(\d{6})(?!\d)", text)
+            if match:
+                return match.group(1)
+        time.sleep(1)
+    raise UserError("90 秒内没有收到中国移动登录验证码")
+
+
+def auto_login_once(identifier: str, manual: bool = False) -> dict:
+    fd = os.open(AUTO_LOCK_FILE, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return {"state": "busy", "message": "自动登录任务正在运行"}
+        state = load_state()
+        _, account = get_account(state, identifier)
+        auto = obj(state.get("auto"))
+        if not auto.get("enabled"):
+            raise UserError("自动登录总开关未开启")
+        if not account.get("auto_enabled"):
+            raise UserError("该账号未加入自动登录")
+        if account.get("provider") != "mobile":
+            raise UserError("自动登录仅支持中国移动账号")
+        sim = sim_info()
+        if not account_matches_sim(account, sim):
+            raise UserError(sim.get("reason") or "当前 SIM 与账号不一致")
+        account["auto_last_check"] = now_ts()
+        state["accounts"][identifier] = account
+        save_state(state)
+        try:
+            usage = refresh_account_into_state(identifier)
+            last_success = int(account.get("auto_last_success") or 0)
+            relogin_seconds = clamp_int(
+                auto.get("relogin_interval_minutes"), 30, 1440, 360
+            ) * 60
+            if not manual and now_ts() - last_success < relogin_seconds:
+                return {"state": "ready", "message": "会话正常", "usage": usage}
+        except AuthRequired:
+            usage = None
+        if not attempt_allowed(load_state(), identifier):
+            raise UserError("今天的自动登录短信额度已用完")
+        state = load_state()
+        _, account = get_account(state, identifier)
+        existing = sms_messages()
+        max_id = max(
+            (int(digits(item.get("id")) or 0) for item in existing), default=0
+        )
+        phone = account_identity(account)
+        sent = mobile_send_code(phone, account.get("label", "中国移动"))
+        state = load_state()
+        identifier = obj(sent.get("account")).get("id") or identifier
+        account = obj(state["accounts"].get(identifier))
+        account["auto_last_attempt"] = now_ts()
+        state["accounts"][identifier] = account
+        save_state(state)
+        code = wait_mobile_code_after(max_id, 90)
+        result = mobile_verify_code(identifier, code)
+        state = load_state()
+        state["accounts"][identifier]["auto_last_success"] = now_ts()
+        state["accounts"][identifier]["auto_last_attempt"] = now_ts()
+        state["accounts"][identifier]["last_error"] = ""
+        save_state(state)
+        log_message(f"auto-login success account={identifier[:8]}")
+        return {
+            "state": "ready",
+            "message": "自动登录成功",
+            "usage": result.get("usage"),
+        }
+    finally:
+        with contextlib.suppress(OSError):
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+
+
+def auto_daemon() -> None:
+    log_message("automatic login daemon started")
+    while True:
+        try:
+            state = load_state()
+            auto = obj(state.get("auto"))
+            if not auto.get("enabled"):
+                time.sleep(30)
+                continue
+            try:
+                sim = sim_info()
+            except UserError:
+                sim = {}
+            candidates = [
+                account
+                for account in state["accounts"].values()
+                if obj(account).get("auto_enabled")
+                and obj(account).get("provider") == "mobile"
+                and account_matches_sim(obj(account), sim)
+            ]
+            check_seconds = clamp_int(
+                auto.get("check_interval_minutes"), 5, 1440, 30
+            ) * 60
+            due = [
+                account
+                for account in candidates
+                if now_ts() - int(account.get("auto_last_check") or 0)
+                >= check_seconds
+            ]
+            if due:
+                due.sort(key=lambda item: int(item.get("auto_last_check") or 0))
+                auto_login_once(due[0]["id"], manual=False)
+        except UserError as error:
+            state = load_state()
+            for account in state["accounts"].values():
+                if (
+                    obj(account).get("provider") == "mobile"
+                    and account.get("auto_enabled")
+                ):
+                    account["last_error"] = safe_message(error, 160)
+            with contextlib.suppress(Exception):
+                save_state(state)
+            log_message(f"automatic login check failed: {safe_message(error, 100)}")
+        except Exception as error:
+            log_message(f"automatic login unexpected error: {type(error).__name__}")
+        time.sleep(30)
+
+
+def log_message(message: str) -> None:
+    safe = safe_message(message, 180)
+    with contextlib.suppress(Exception):
+        subprocess.run(
+            ["logger", "-t", "ufi-usage", safe],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+            check=False,
+        )
+
+
+def bootstrap(selected_id: str | None = None) -> dict:
+    state = load_state()
+    accounts = []
+    for account in state["accounts"].values():
+        accounts.append(public_account(obj(account)))
+    accounts.sort(key=lambda item: (item["provider_name"], item["label"]))
+    active = selected_id or state.get("active_account") or (accounts[0]["id"] if accounts else "")
+    account = obj(state["accounts"].get(active))
+    usage = account.get("usage") if account else None
+    try:
+        sim = sim_info()
+    except UserError as error:
+        sim = {
+            "ready": False,
+            "carrier": None,
+            "carrier_name": "读取失败",
+            "phone_masked": None,
+            "supported_auto_login": False,
+            "reason": clean_text(error, 100),
+        }
+    return {
+        "ok": True,
+        "version": APP_VERSION,
+        "accounts": accounts,
+        "active_account": active,
+        "usage": usage,
+        "active_account_meta": public_account(account) if account else None,
+        "sim": {key: value for key, value in sim.items() if key != "phone"},
+        "auto": obj(state.get("auto")),
+        "auto_can_match": account_matches_sim(account, sim) if account else False,
+        "stale": bool(account.get("usage") and account.get("last_error")),
+        "attribution": {
+            "source": "Asunano/UFI-AXIS",
+            "url": "https://github.com/Asunano/UFI-AXIS",
+            "license": "MIT",
+        },
+    }
+
+
+def api_dispatch(request: dict) -> dict:
+    action = clean_text(request.get("action"), 40)
+    selected = clean_text(request.get("account_id"), 40) or None
+    if action == "bootstrap":
+        return bootstrap(selected)
+    if action == "mobile_send_code":
+        result = mobile_send_code(request.get("phone"), request.get("label"))
+        return {"ok": True, **result}
+    if action == "mobile_verify_code":
+        result = mobile_verify_code(
+            clean_text(request.get("account_id"), 40), request.get("code")
+        )
+        return {"ok": True, **result}
+    if action == "unicom_password_login":
+        result = unicom_password_login(
+            request.get("phone"),
+            request.get("password"),
+            request.get("label"),
+        )
+        return {"ok": True, **result}
+    if action == "unicom_token_login":
+        result = unicom_token_login(
+            request.get("phone"),
+            request.get("token"),
+            request.get("label"),
+        )
+        return {"ok": True, **result}
+    if action == "unicom_export_token":
+        return unicom_export_token(clean_text(request.get("account_id"), 40))
+    if action == "unicom_send_sms":
+        result = unicom_send_sms(request.get("phone"), request.get("label"))
+        return {"ok": True, **result}
+    if action == "unicom_resume_sms_send":
+        result = unicom_resume_sms_send(
+            clean_text(request.get("account_id"), 40),
+            clean_text(request.get("verification_id"), 64),
+            request.get("result_token"),
+        )
+        return {"ok": True, **result}
+    if action == "unicom_verify_sms":
+        result = unicom_verify_sms(
+            clean_text(request.get("account_id"), 40), request.get("code")
+        )
+        return {"ok": True, **result}
+    if action == "unicom_qr_start":
+        result = unicom_qr_start(request.get("label"), request.get("phone"))
+        return {"ok": True, **result}
+    if action == "unicom_qr_poll":
+        result = unicom_qr_poll(clean_text(request.get("account_id"), 40))
+        return {"ok": True, **result}
+    if action == "cloud_login":
+        result = cloud_login(
+            clean_text(request.get("provider"), 20),
+            request.get("card_no"),
+            request.get("verify"),
+            request.get("label"),
+        )
+        return {"ok": True, **result}
+    if action == "refresh":
+        identifier = clean_text(request.get("account_id"), 40)
+        try:
+            usage = refresh_account_into_state(identifier)
+        except UserError as error:
+            message = safe_message(error, 160)
+            state = load_state()
+            _, account = get_account(state, identifier)
+            account["last_error"] = message
+            state["accounts"][identifier] = account
+            save_state(state)
+            return {
+                "ok": True,
+                "stale": True,
+                "error": message,
+                "message": "刷新失败，已保留上一次余量数据",
+                "usage": account.get("usage"),
+                "account": public_account(account),
+            }
+        state = load_state()
+        return {
+            "ok": True,
+            "stale": False,
+            "usage": usage,
+            "account": public_account(state["accounts"][identifier]),
+        }
+    if action == "delete_account":
+        identifier = clean_text(request.get("account_id"), 40)
+        state = load_state()
+        get_account(state, identifier)
+        state["accounts"].pop(identifier, None)
+        obj(state.get("rate")).pop(identifier, None)
+        if state.get("active_account") == identifier:
+            state["active_account"] = next(iter(state["accounts"]), "")
+        save_state(state)
+        return {"ok": True, "message": "账号已删除"}
+    if action == "rename_account":
+        identifier = clean_text(request.get("account_id"), 40)
+        state = load_state()
+        _, account = get_account(state, identifier)
+        label = clean_text(request.get("label"), 40)
+        if not label:
+            raise UserError("备注不能为空")
+        account["label"] = label
+        state["accounts"][identifier] = account
+        save_state(state)
+        return {"ok": True, "account": public_account(account)}
+    if action in {"bind_identity", "update_identity"}:
+        identifier = clean_text(request.get("account_id"), 40)
+        state = load_state()
+        _, account = get_account(state, identifier)
+        provider = account.get("provider")
+        if provider not in {"mobile", "unicom"}:
+            raise UserError("只有移动或联通账号支持修改手机号")
+        phone = digits(request.get("phone"))
+        if not re.fullmatch(r"1[3-9]\d{9}", phone):
+            raise UserError("请输入正确的 11 位手机号")
+        previous_phone = digits(account_identity(account))
+        if provider == "mobile" and phone != previous_phone:
+            account["auto_enabled"] = False
+        account["identity_enc"] = encrypt_secret(phone)
+        session = load_session(account)
+        if provider == "mobile" and obj(session.get("pending")):
+            session["pending"]["phone"] = phone
+            store_session(account, session)
+        elif provider == "unicom":
+            if session.get("mode") == "unicom_sms_pending":
+                session["phone"] = phone
+            elif session.get("mode") == "unicom_qr_pending":
+                session["manual_phone"] = phone
+            elif session.get("mode") == "sms":
+                session["phone"] = phone
+            if session:
+                store_session(account, session)
+        usage = obj(account.get("usage"))
+        if usage:
+            usage["phone_masked"] = mask_phone(phone)
+            account["usage"] = usage
+        state["accounts"][identifier] = account
+        save_state(state)
+        return {
+            "ok": True,
+            "account": public_account(account),
+            "usage": usage or None,
+            "message": "手机号已更新",
+        }
+    if action == "set_auto":
+        state = load_state()
+        account = obj(state["accounts"].get(selected)) if selected else None
+        auto = obj(state.get("auto"))
+        values = obj(request.get("auto"))
+        auto["enabled"] = bool(values.get("enabled"))
+        auto["check_interval_minutes"] = clamp_int(
+            values.get("check_interval_minutes"), 5, 1440, 30
+        )
+        auto["relogin_interval_minutes"] = clamp_int(
+            values.get("relogin_interval_minutes"), 30, 1440, 360
+        )
+        auto["daily_sms_limit"] = clamp_int(
+            values.get("daily_sms_limit"), 1, 10, 3
+        )
+        if selected:
+            if not account:
+                raise UserError("自动登录账号不存在")
+            if account.get("provider") != "mobile":
+                raise UserError("自动登录仅支持中国移动账号")
+            if values.get("participate"):
+                sim = sim_info()
+                if not account_matches_sim(account, sim):
+                    raise UserError(
+                        sim.get("reason") or "当前 SIM 与账号手机号不一致"
+                    )
+            account["auto_enabled"] = bool(values.get("participate"))
+            account["auto_last_check"] = 0
+            state["accounts"][selected] = account
+        state["auto"] = auto
+        save_state(state)
+        return {
+            "ok": True,
+            "auto": auto,
+            "account": public_account(account) if account else None,
+            "message": "自动登录设置已保存",
+        }
+    if action == "auto_now":
+        identifier = clean_text(request.get("account_id"), 40)
+        state = load_state()
+        _, account = get_account(state, identifier)
+        if account.get("provider") != "mobile":
+            raise UserError("自动登录仅支持中国移动账号")
+        subprocess.Popen(
+            [sys.executable, str(Path(__file__).resolve()), "autologin-once", identifier],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+        )
+        return {"ok": True, "state": "queued", "message": "已排队检查并按需登录"}
+    raise UserError("未知操作")
+
+
+def api_main(request_path: str) -> int:
+    try:
+        if os.path.getsize(request_path) > MAX_REQUEST_BYTES:
+            raise UserError("请求过大")
+        with open(request_path, encoding="utf-8") as handle:
+            request = obj(json.load(handle))
+        response = api_dispatch(request)
+    except UserError as error:
+        response = {"ok": False, "error": safe_message(error, 220)}
+    except Exception as error:
+        log_message(f"API unexpected error: {type(error).__name__}")
+        response = {"ok": False, "error": "插件处理失败，请查看系统日志"}
+    sys.stdout.write(json.dumps(response, ensure_ascii=False, separators=(",", ":")))
+    return 0
+
+
+def selftest() -> dict:
+    mobile_raw = {
+        "app-plan": {
+            "retCode": "000000",
+            "rspBody": {
+                "newPlanRemainQryRes": {
+                    "planRemianFlowListRes": {
+                        "planRemianFlowRes": [
+                            {
+                                "flowtype": "0",
+                                "unit": "04",
+                                "flowUsdNum": "1.5",
+                                "flowSumNum": "10",
+                                "flowRemainNum": "8.5",
+                                "planRemianFlowInfoRes": [],
+                            }
+                        ]
+                    }
+                }
+            },
+        },
+        "app-fee": {"rspBody": {"curFeeTotal": "12.34"}},
+        "app-user": {"rspBody": {"userInfo": {"userName": "测试"}}},
+        "app-planq": {"rspBody": {"planQryInfos": [{"curPlanName": "测试套餐"}]}},
+        "app-bills": {"rspBody": {"historyBillInfo": [{"totalBill": "20.00"}]}},
+        "app-points": {"rspBody": {"pointValue": "88"}},
+        "app-flow": {"rspBody": {"homeFlowInfo": {"usedTotal": "2048", "unit": "1"}}},
+        "app-accout": {"rspBody": {}},
+    }
+    mobile_usage = parse_mobile_usage(mobile_raw, "13800138000")
+    assert mobile_usage["balance_yuan"] == 12.34
+    assert mobile_usage["flow"]["general_remaining_gb"] == 8.5
+    assert mobile_usage["monthly_used_gb"] == 2.0
+
+    unicom_duplicate_detail = {
+        "elemType": "3",
+        "flowType": "1",
+        "feePolicyId": "policy-1",
+        "use": "1024",
+        "remain": "3072",
+        "feePolicyName": "相同测试包",
+        "typemark": "0",
+    }
+    unicom_duplicate_from_resources = {
+        **unicom_duplicate_detail,
+        "feePolicyName": "相同测试包（资源节点）",
+    }
+    unicom_usage = parse_unicom_usage(
+        {
+            "packageName": "测试套餐",
+            "unshared": {
+                "details": [
+                    unicom_duplicate_detail,
+                    {
+                        "elemType": "3",
+                        "flowType": "1",
+                        "feePolicyId": "hidden-policy",
+                        "feePolicyName": "内部资源",
+                        "use": "0",
+                        "remain": "10240",
+                        "hide": True,
+                    },
+                    {
+                        "elemType": "3",
+                        "flowType": "2",
+                        "feePolicyId": "unlimited-policy",
+                        "feePolicyName": "无限定向包",
+                        "use": "512",
+                        "remain": "0",
+                        "limited": "1",
+                        "typemark": "1",
+                    },
+                ]
+            },
+            "resources": {
+                "details": [
+                    unicom_duplicate_from_resources,
+                    {
+                        "elemType": "3",
+                        "flowType": "1",
+                        "feePolicyId": "ordinary-2",
+                        "feePolicyName": "普通测试包 2",
+                        "use": "1024",
+                        "remain": "1024",
+                    },
+                ]
+            },
+        },
+        {"curntbalancecust": "9.50"},
+        "13100131000",
+    )
+    assert unicom_usage["flow"]["general_remaining_gb"] == 4.0
+    assert unicom_usage["flow"]["directed_unlimited"] is True
+    assert len(unicom_usage["packages"]) == 3
+    assert unicom_usage["packages"][0]["unlimited"] is True
+    assert unicom_usage["packages"][0]["sharing"] == "unshared"
+    assert any(
+        item["name"].startswith("相同测试包") and item["sharing"] == "shared"
+        for item in unicom_usage["packages"]
+    )
+    assert unicom_usage["balance_yuan"] == 9.5
+
+    cloud_usage = parse_cloud_usage(
+        "cloud",
+        {"name": "测试系列"},
+        {"card": "1234567", "used": 1024, "free": 3072, "state": 0, "balance": 2},
+        [{"setMealName": "100G", "flowVirtual": 4096, "flowUsedVirtual": 1024}],
+        [],
+        [],
+        [],
+    )
+    assert cloud_usage["flow"]["general_remaining_gb"] == 3.0
+    assert cloud_usage["cloud_card"]["provider_name"] == "云上卡"
+
+    sample = {"test": "敏感数据✓"}
+    encrypted = encrypt_secret(sample)
+    assert decrypt_secret(encrypted) == sample
+    _, mobile_headers = mobile_envelope("/selftest", {"cellNum": "13800138000"})
+    token_plain = openssl_aes(
+        mobile_headers["x-token"].encode("ascii"), MOBILE_REQ_KEY, decrypt=True
+    ).decode("utf-8")
+    assert re.fullmatch(r"[0-9a-f]{32}_/selftest_\d{13}_\d{8}", token_plain)
+    rsa_ciphertext = base64.b64decode(unicom_rsa("13100131000"))
+    assert len(rsa_ciphertext) == 128
+    assert "138****8000" in safe_message("账号 13800138000 已登录")
+    return {
+        "ok": True,
+        "version": APP_VERSION,
+        "parsers": ["mobile", "unicom", "cloud", "xj"],
+        "crypto": ["mobile-aes", "unicom-rsa"],
+        "storage_encryption": True,
+    }
+
+
+def doctor() -> dict:
+    ensure_data_dir()
+    result = {
+        "ok": True,
+        "version": APP_VERSION,
+        "python": sys.version.split()[0],
+        "dependencies": {},
+        "storage": {},
+    }
+    for command in ("openssl", "ubus", "logger"):
+        result["dependencies"][command] = bool(shutil.which(command))
+    result["dependencies"]["luci_controller"] = Path(
+        "/usr/lib/lua/luci/controller/ufi_usage.lua"
+    ).exists()
+    result["dependencies"]["smsd"] = any(
+        "mu300-smsd" in command
+        for command in (
+            _read_cmdline(path)
+            for path in Path("/proc").glob("[0-9]*/cmdline")
+        )
+        if command
+    )
+    result["storage"] = {
+        "path": str(DATA_DIR),
+        "mode": oct(DATA_DIR.stat().st_mode & 0o777),
+        "state_mode": oct(STATE_FILE.stat().st_mode & 0o777)
+        if STATE_FILE.exists()
+        else None,
+        "key_mode": oct(KEY_FILE.stat().st_mode & 0o777)
+        if KEY_FILE.exists()
+        else None,
+    }
+    result["ok"] = all(bool(value) for value in result["dependencies"].values())
+    return result
+
+
+def _read_cmdline(path: Path) -> str:
+    try:
+        return path.read_bytes().replace(b"\0", b" ").decode("utf-8", "ignore")
+    except OSError:
+        return ""
+
+
+def print_json(value: Any) -> None:
+    sys.stdout.write(
+        json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    )
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) < 2:
+        print("usage: ufi-usage api FILE | selftest | doctor | autologin-daemon | autologin-once ID")
+        return 2
+    command = argv[1]
+    if command == "api" and len(argv) == 3:
+        return api_main(argv[2])
+    if command == "selftest":
+        print_json(selftest())
+        return 0
+    if command == "doctor":
+        print_json(doctor())
+        return 0
+    if command == "autologin-daemon":
+        auto_daemon()
+        return 0
+    if command == "autologin-once" and len(argv) == 3:
+        try:
+            result = auto_login_once(argv[2], manual=True)
+            print_json({"ok": True, **result})
+            return 0
+        except UserError as error:
+            print_json({"ok": False, "error": clean_text(error, 220)})
+            return 1
+    print("unknown command", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))

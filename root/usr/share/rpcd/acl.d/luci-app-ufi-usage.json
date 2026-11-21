@@ -1,0 +1,10 @@
+{
+	"luci-app-ufi-usage": {
+		"description": "Grant access to the UFI usage panel",
+		"read": {
+			"ubus": {
+				"mu300dash": [ "sms_list", "sms_show" ]
+			}
+		}
+	}
+}
