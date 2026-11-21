@@ -35,7 +35,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: luci-app-ufi-usage
-          path: outputs/*.apk
+          path: |
+            outputs/*.apk
+            outputs/*.apk.sha256
           if-no-files-found: error
 
       - name: Publish tagged release
@@ -44,6 +46,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           apk_path=$(find outputs -maxdepth 1 -name '*.apk' -print -quit)
+          sha_path="${apk_path}.sha256"
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 ||
             gh release create "$GITHUB_REF_NAME" --generate-notes
-          gh release upload "$GITHUB_REF_NAME" "$apk_path" --clobber
+          gh release upload "$GITHUB_REF_NAME" "$apk_path" "$sha_path" --clobber

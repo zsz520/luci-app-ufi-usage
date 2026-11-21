@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.0-r28
+
+- Added no-capture China Unicom Mini Program SMS-code login.
+- Added the official risk slider, `login-web` SMS delivery, `radomLogin` token exchange, and background `onLine` session renewal.
+- Added a Mini Program login-mode switch for SMS code or OpenID recovery.
+
 ## 1.0.0-r27
 
 - Added China Unicom WeChat Mini Program `openid` login.

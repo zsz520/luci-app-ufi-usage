@@ -784,7 +784,7 @@
 						<button class="ub-login-tab active" type="button" data-unicom-tab="sms" role="tab" aria-selected="true">短信验证码</button>
 						<button class="ub-login-tab" type="button" data-unicom-tab="token" role="tab" aria-selected="false">Token 登录</button>
 						<button class="ub-login-tab" type="button" data-unicom-tab="qr" role="tab" aria-selected="false">扫码登录</button>
-						<button class="ub-login-tab" type="button" data-unicom-tab="mini" role="tab" aria-selected="false">小程序 OpenID</button>
+						<button class="ub-login-tab" type="button" data-unicom-tab="mini" role="tab" aria-selected="false">小程序登录</button>
 					</div>
 					<div id="ub-unicom-sms-pane" class="ub-login-pane">
 						<div class="ub-field">
@@ -826,12 +826,33 @@
 						</div>
 					</div>
 					<div id="ub-unicom-mini-pane" class="ub-login-pane hidden">
-						<div class="ub-field">
-							<label>微信小程序 openid</label>
-							<input id="ub-unicom-mini-openid" autocomplete="off" spellcheck="false" maxlength="256" placeholder="填写 findOpenid 响应中的明文 openid">
+						<div class="ub-segment" role="radiogroup" aria-label="小程序登录方式">
+							<label><input type="radio" name="ub-mini-mode" value="sms" checked>验证码登录</label>
+							<label><input type="radio" name="ub-mini-mode" value="openid">OpenID 恢复</label>
 						</div>
-						<p class="ub-hint">需要先在微信“中国联通”小程序登录并绑定号码。该方式只保存加密后的 OpenID，不需要手机号密码或短信验证码。</p>
-						<button class="ub-btn primary" id="ub-unicom-mini-login" type="button">使用小程序 OpenID 登录</button>
+						<div id="ub-mini-sms-pane" class="ub-login-pane">
+							<div class="ub-field">
+								<label>联通手机号</label>
+								<input id="ub-unicom-mini-phone" inputmode="numeric" autocomplete="tel" maxlength="11" placeholder="11 位手机号">
+							</div>
+							<div class="ub-field">
+								<label>短信验证码</label>
+								<div class="ub-code-line">
+									<input class="ub-code" id="ub-unicom-mini-code" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="6 位验证码">
+									<button class="ub-btn primary" id="ub-unicom-mini-send" type="button">发送验证码</button>
+								</div>
+							</div>
+							<p class="ub-hint" id="ub-unicom-mini-hint">发送后完成联通官方滑块验证，验证码会下发到手机。无需抓包，也不保存验证码。</p>
+							<button class="ub-btn primary" id="ub-unicom-mini-verify" type="button" disabled>验证码登录</button>
+						</div>
+						<div id="ub-mini-openid-pane" class="ub-login-pane hidden">
+							<div class="ub-field">
+								<label>微信小程序 openid</label>
+								<input id="ub-unicom-mini-openid" autocomplete="off" spellcheck="false" maxlength="256" placeholder="填写 findOpenid 响应中的明文 openid">
+							</div>
+							<p class="ub-hint">用于恢复已经在微信“中国联通营业厅”绑定号码的会话。只保存加密后的 OpenID。</p>
+							<button class="ub-btn primary" id="ub-unicom-mini-login" type="button">使用小程序 OpenID 登录</button>
+						</div>
 					</div>
 					<details class="ub-more" id="ub-unicom-more">
 						<summary>更多登录方式</summary>
@@ -904,10 +925,14 @@
 	var busy = false;
 	var pendingMobileId = '';
 	var pendingUnicomId = '';
+	var pendingMiniSmsId = '';
 	var qrPollTimer = null;
 	var smsCountdownTimer = null;
 	var smsCountdownRemaining = 0;
+	var miniSmsCountdownTimer = null;
+	var miniSmsCountdownRemaining = 0;
 	var unicomLoginMode = 'sms';
+	var miniLoginMode = 'sms';
 	var autoRefreshTimer = null;
 	var refreshingAccountId = '';
 	var toastTimer = null;
@@ -1116,10 +1141,12 @@
 	function renderAccountList() {
 		if (!state.accounts.length) return '<div class="ub-empty">还没有余量账号</div>';
 		return state.accounts.map(function (account) {
+			var methodLabel = account.access_method === 'mini' ? ' · 小程序' :
+				account.access_method === 'mini_sms' ? ' · 小程序验证码' : '';
 			return '<button class="ub-account' + (account.id === state.active_account ? ' active' : '') + '" data-select-account="' + attr(account.id) + '">' +
 				'<span class="ub-avatar">' + esc(providerLetter(account.provider)) + '</span>' +
 				'<span class="ub-account-main"><span class="ub-account-name">' + esc(account.label || account.provider_name) + '</span>' +
-				'<span class="ub-account-sub">' + esc(account.provider_name) + (account.access_method === 'mini' ? ' · 小程序' : '') + ' · ' + esc(account.identity_masked || '待识别') + '</span></span>' +
+				'<span class="ub-account-sub">' + esc(account.provider_name) + methodLabel + ' · ' + esc(account.identity_masked || '待识别') + '</span></span>' +
 				'<span class="ub-dot' + (account.ready ? ' ready' : '') + '" title="' + (account.ready ? '会话已保存' : '需要登录') + '"></span>' +
 				'</button>';
 		}).join('');
@@ -1128,17 +1155,17 @@
 		var account = state.active_account_meta;
 		var usage = state.usage;
 		var isUnicom = !!account && account.provider === 'unicom';
-		var isMiniUnicom = isUnicom && account.access_method === 'mini';
+		var isMiniUnicom = isUnicom && (account.access_method === 'mini' || account.access_method === 'mini_sms');
 		var isCarrierUnicom = isUnicom && !isMiniUnicom;
 		if (!account) {
 			return '<section class="ub-card ub-cta"><h3>开始配置余量</h3>' +
-				'<p>支持中国移动短信登录、中国联通短信验证码/Token/扫码/小程序 OpenID、云上卡和小鲸卡充值号查询。' +
+				'<p>支持中国移动短信登录、中国联通短信验证码/Token/扫码/小程序验证码与 OpenID、云上卡和小鲸卡充值号查询。' +
 				'不保存手机号密码或联通服务密码；保存的会话使用本机密钥加密。</p>' +
 				'<button class="ub-btn primary" data-add>添加第一个账号</button></section>';
 		}
 		if (!usage) {
 			return '<section class="ub-card ub-cta"><h3>' + esc(account.provider_name) + '尚未登录</h3>' +
-				'<p>' + (account.last_error ? esc(account.last_error) : (isUnicom ? '请使用短信验证码、Token、App 扫码或小程序 OpenID 完成登录。' : '请重新登录以读取余量。')) + '</p>' +
+				'<p>' + (account.last_error ? esc(account.last_error) : (isUnicom ? '请使用短信验证码、Token、App 扫码或小程序登录完成验证。' : '请重新登录以读取余量。')) + '</p>' +
 				'<div class="ub-actions" style="justify-content:center">' +
 				'<button class="ub-btn primary" data-readd="' + attr(account.provider) + '">重新登录</button>' +
 				(account.provider === 'mobile' || isCarrierUnicom ? '<button class="ub-btn" data-bind="' + attr(account.id) + '">修改手机号</button>' : '') +
@@ -1200,7 +1227,7 @@
 			'<section class="ub-panel ub-hero"><div class="ub-hero-top"><div><div class="ub-label">可用余额</div>' +
 			'<div class="ub-balance"><small>¥</small>' + money(usage.balance_yuan) + '</div>' +
 			'<div class="ub-who"><b>' + esc(account.provider_name) + '</b> · ' + esc(usage.phone_masked || account.identity_masked) +
-			(isMiniUnicom ? ' · 微信小程序' : '') + (usage.owner_name ? ' · 机主 ' + esc(usage.owner_name) : '') + '</div></div>' +
+				(isMiniUnicom ? (account.access_method === 'mini_sms' ? ' · 小程序验证码' : ' · 微信小程序') : '') + (usage.owner_name ? ' · 机主 ' + esc(usage.owner_name) : '') + '</div></div>' +
 			'<div class="ub-plan"><div class="ub-label">当前套餐</div><div class="ub-plan-name">' + esc(usage.plan_name || '未返回套餐名称') + '</div>' +
 			(usage.contract_name ? '<div class="ub-sub">合约：' + esc(usage.contract_name) + '</div>' : '') +
 			(cloud.expires_at ? '<div class="ub-sub">到期 ' + esc(cloud.expires_at) + '</div>' : '') + '</div></div>' +
@@ -1260,6 +1287,7 @@
 	function hideAdd() {
 		stopQrPoll();
 		stopSmsCountdown();
+		stopMiniSmsCountdown();
 		if (verificationCleanup) verificationCleanup();
 		addMask.classList.add('hidden');
 	}
@@ -1275,6 +1303,12 @@
 		smsCountdownRemaining = 0;
 		updateUnicomControls();
 	}
+	function stopMiniSmsCountdown() {
+		if (miniSmsCountdownTimer) clearInterval(miniSmsCountdownTimer);
+		miniSmsCountdownTimer = null;
+		miniSmsCountdownRemaining = 0;
+		updateUnicomControls();
+	}
 	function updateUnicomControls() {
 		var sendButton = document.getElementById('ub-unicom-send');
 		var phone = document.getElementById('ub-unicom-phone').value;
@@ -1283,12 +1317,18 @@
 		var tokenPhone = document.getElementById('ub-unicom-token-phone').value.trim();
 		var qrPhone = document.getElementById('ub-unicom-qr-phone').value.trim();
 		var miniOpenid = document.getElementById('ub-unicom-mini-openid').value.trim();
+		var miniPhone = document.getElementById('ub-unicom-mini-phone').value.trim();
+		var miniCode = document.getElementById('ub-unicom-mini-code').value.trim();
+		var miniSend = document.getElementById('ub-unicom-mini-send');
 		sendButton.disabled = busy || smsCountdownRemaining > 0 || !validPhone(phone);
 		sendButton.textContent = smsCountdownRemaining > 0 ? smsCountdownRemaining + ' 秒后重发' : '发送验证码';
 		document.getElementById('ub-unicom-verify').disabled = busy || !pendingUnicomId || !code;
 		document.getElementById('ub-unicom-token-login').disabled = busy || token.length <= 20 || (!!tokenPhone && !validPhone(tokenPhone));
 		document.getElementById('ub-unicom-qr-start').disabled = busy || (!!qrPhone && !validPhone(qrPhone));
 		document.getElementById('ub-unicom-mini-login').disabled = busy || miniOpenid.length < 16;
+		miniSend.disabled = busy || miniSmsCountdownRemaining > 0 || !validPhone(miniPhone);
+		miniSend.textContent = miniSmsCountdownRemaining > 0 ? miniSmsCountdownRemaining + ' 秒后重发' : '发送验证码';
+		document.getElementById('ub-unicom-mini-verify').disabled = busy || !pendingMiniSmsId || !miniCode;
 	}
 	function startSmsCountdown() {
 		if (smsCountdownTimer) clearInterval(smsCountdownTimer);
@@ -1302,6 +1342,28 @@
 			}
 			updateUnicomControls();
 		}, 1000);
+	}
+	function startMiniSmsCountdown() {
+		if (miniSmsCountdownTimer) clearInterval(miniSmsCountdownTimer);
+		miniSmsCountdownRemaining = 60;
+		updateUnicomControls();
+		miniSmsCountdownTimer = setInterval(function () {
+			miniSmsCountdownRemaining = Math.max(0, miniSmsCountdownRemaining - 1);
+			if (miniSmsCountdownRemaining === 0) {
+				clearInterval(miniSmsCountdownTimer);
+				miniSmsCountdownTimer = null;
+			}
+			updateUnicomControls();
+		}, 1000);
+	}
+	function setMiniLoginMode(mode) {
+		miniLoginMode = mode === 'openid' ? 'openid' : 'sms';
+		document.querySelectorAll('input[name="ub-mini-mode"]').forEach(function (radio) {
+			radio.checked = radio.value === miniLoginMode;
+		});
+		document.getElementById('ub-mini-sms-pane').classList.toggle('hidden', miniLoginMode !== 'sms');
+		document.getElementById('ub-mini-openid-pane').classList.toggle('hidden', miniLoginMode !== 'openid');
+		updateUnicomControls();
 	}
 	function setUnicomMode(mode) {
 		unicomLoginMode = mode === 'token' || mode === 'qr' || mode === 'mini' ? mode : 'sms';
@@ -1319,17 +1381,23 @@
 	}
 	function resetUnicomLogin() {
 		stopSmsCountdown();
+		stopMiniSmsCountdown();
 		stopQrPoll();
 		pendingUnicomId = '';
+		pendingMiniSmsId = '';
 		document.getElementById('ub-unicom-phone').value = '';
 		document.getElementById('ub-unicom-code').value = '';
 		document.getElementById('ub-unicom-token-phone').value = '';
 		document.getElementById('ub-unicom-token').value = '';
 		document.getElementById('ub-unicom-qr-phone').value = '';
+		document.getElementById('ub-unicom-mini-phone').value = '';
+		document.getElementById('ub-unicom-mini-code').value = '';
 		document.getElementById('ub-unicom-mini-openid').value = '';
 		document.getElementById('ub-unicom-qr-content').classList.add('hidden');
 		document.getElementById('ub-qr-image').removeAttribute('src');
 		document.getElementById('ub-unicom-sms-hint').textContent = '先发送验证码；遇到安全验证时会打开联通官方验证页。';
+		document.getElementById('ub-unicom-mini-hint').textContent = '发送后完成联通官方滑块验证，验证码会下发到手机。无需抓包，也不保存验证码。';
+		setMiniLoginMode('sms');
 		setUnicomMode('sms');
 	}
 	function updateAddForm() {
@@ -1351,7 +1419,7 @@
 			document.getElementById('ub-identity').setAttribute('placeholder', '手机号');
 			hint.textContent = '会向该号码发送真实验证码。登录成功后保存加密会话。';
 		} else {
-			hint.textContent = '短信验证码是主登录方式；Token 可用于恢复已有会话，安全验证失败时可改用扫码。';
+			hint.textContent = '短信验证码、小程序验证码、Token 与扫码可任选；小程序验证码会先完成联通官方滑块。';
 		}
 		document.getElementById('ub-add-submit').textContent = provider === 'mobile' ? '发送验证码' :
 			provider === 'cloud' || provider === 'xj' ? '登录并查询' : '继续';
@@ -1410,6 +1478,67 @@
 			window.addEventListener('message', onMessage);
 			verifyMask.classList.remove('hidden');
 			verifyFrame.src = verification.url;
+		});
+	}
+	function runMiniSmsSlider(accountId, flowId, mobileHex) {
+		return new Promise(function (resolve, reject) {
+			if (!accountId || !flowId || !mobileHex) {
+				reject(new Error('联通安全验证信息不完整'));
+				return;
+			}
+			if (verificationCleanup) verificationCleanup();
+			var origin = 'https://img.client.10010.com';
+			var settled = false;
+			var timer = setTimeout(function () {
+				finish(new Error('联通安全验证超时，请重新发送'));
+			}, 300000);
+			function finish(error, value) {
+				if (settled) return;
+				settled = true;
+				clearTimeout(timer);
+				window.removeEventListener('message', onMessage);
+				verifyMask.classList.add('hidden');
+				verifyFrame.removeAttribute('src');
+				verificationCleanup = null;
+				if (error) reject(error); else resolve(value);
+			}
+			async function onMessage(event) {
+				if (
+					event.origin !== origin ||
+					event.source !== verifyFrame.contentWindow ||
+					!event.data || typeof event.data !== 'object'
+				) return;
+				if (event.data.code === 'myLoad') {
+					verifyFrame.contentWindow.postMessage({
+						mobile: mobileHex,
+						type: '10',
+						mainDesc: '拖动滑块完成安全验证'
+					}, origin);
+					return;
+				}
+				if (event.data.code === '0001') {
+					finish(new Error('已取消联通安全验证'));
+					return;
+				}
+				if (event.data.code !== '0000' || typeof event.data.resultToken !== 'string') return;
+				try {
+					document.getElementById('ub-unicom-mini-hint').textContent = '安全验证已通过，正在下发短信验证码…';
+					var result = await api('unicom_mini_sms_send', {
+						account_id: accountId,
+						flow_id: flowId,
+						result_token: event.data.resultToken
+					});
+					finish(null, result);
+				} catch (error) {
+					finish(error);
+				}
+			}
+			verificationCleanup = function () {
+				finish(new Error('已取消联通安全验证'));
+			};
+			window.addEventListener('message', onMessage);
+			verifyMask.classList.remove('hidden');
+			verifyFrame.src = origin + '/loginRisk/index.html';
 		});
 	}
 	async function submitAdd() {
@@ -1473,6 +1602,52 @@
 			await load(pendingUnicomId);
 		} catch (error) {
 			document.getElementById('ub-unicom-sms-hint').textContent = error.message;
+			toast(error.message, true);
+		}
+	}
+	async function sendMiniSms() {
+		var phone = document.getElementById('ub-unicom-mini-phone').value.trim();
+		var label = document.getElementById('ub-label').value.trim();
+		var hint = document.getElementById('ub-unicom-mini-hint');
+		if (!validPhone(phone)) { toast('请输入正确的 11 位联通手机号', true); return; }
+		if (miniSmsCountdownRemaining > 0 || busy) return;
+		hint.textContent = '正在准备联通官方安全验证…';
+		updateUnicomControls();
+		try {
+			var started = await api('unicom_mini_sms_start', {phone: phone, label: label});
+			pendingMiniSmsId = started.account.id;
+			hint.textContent = '请完成联通官方滑块验证，验证码会下发到手机。';
+			var result = await runMiniSmsSlider(
+				started.account.id,
+				started.flow_id,
+				started.mobile_hex
+			);
+			pendingMiniSmsId = (result.account && result.account.id) || pendingMiniSmsId;
+			hint.textContent = (result.message || '短信验证码已发送') + '，验证码 5 分钟内有效。';
+			document.getElementById('ub-unicom-mini-code').value = '';
+			startMiniSmsCountdown();
+			document.getElementById('ub-unicom-mini-code').focus();
+		} catch (error) {
+			hint.textContent = error.message;
+			toast(error.message, true);
+		} finally {
+			updateUnicomControls();
+		}
+	}
+	async function verifyMiniSms() {
+		var code = document.getElementById('ub-unicom-mini-code').value.trim();
+		if (!pendingMiniSmsId || !code) return;
+		try {
+			var result = await api('unicom_mini_sms_verify', {
+				account_id: pendingMiniSmsId,
+				code: code
+			});
+			toast(result.message || '小程序验证码登录成功');
+			stopMiniSmsCountdown();
+			hideAdd();
+			await load(pendingMiniSmsId);
+		} catch (error) {
+			document.getElementById('ub-unicom-mini-hint').textContent = error.message;
 			toast(error.message, true);
 		}
 	}
@@ -1730,14 +1905,21 @@
 			setUnicomMode(button.getAttribute('data-unicom-tab'));
 		});
 	});
+	document.querySelectorAll('input[name="ub-mini-mode"]').forEach(function (radio) {
+		radio.addEventListener('change', function () {
+			setMiniLoginMode(radio.value);
+		});
+	});
 	document.getElementById('ub-add-submit').addEventListener('click', submitAdd);
 	document.getElementById('ub-unicom-send').addEventListener('click', sendUnicomSms);
 	document.getElementById('ub-unicom-verify').addEventListener('click', verifyUnicomSms);
+	document.getElementById('ub-unicom-mini-send').addEventListener('click', sendMiniSms);
+	document.getElementById('ub-unicom-mini-verify').addEventListener('click', verifyMiniSms);
 	document.getElementById('ub-unicom-token-login').addEventListener('click', unicomTokenLogin);
 	document.getElementById('ub-unicom-mini-login').addEventListener('click', unicomMiniLogin);
 	document.getElementById('ub-unicom-password').addEventListener('click', unicomPasswordLogin);
 	document.getElementById('ub-unicom-qr-start').addEventListener('click', startQr);
-	['ub-unicom-phone', 'ub-unicom-code', 'ub-unicom-token-phone', 'ub-unicom-token', 'ub-unicom-qr-phone', 'ub-unicom-mini-openid'].forEach(function (id) {
+	['ub-unicom-phone', 'ub-unicom-code', 'ub-unicom-token-phone', 'ub-unicom-token', 'ub-unicom-qr-phone', 'ub-unicom-mini-phone', 'ub-unicom-mini-code', 'ub-unicom-mini-openid'].forEach(function (id) {
 		document.getElementById(id).addEventListener('input', updateUnicomControls);
 	});
 	document.getElementById('ub-code-submit').addEventListener('click', verifyMobile);
@@ -1767,6 +1949,7 @@
 		else stopAutoRefresh();
 	});
 	window.addEventListener('beforeunload', stopAutoRefresh);
+	setMiniLoginMode('sms');
 	updateAddForm();
 	load();
 })();

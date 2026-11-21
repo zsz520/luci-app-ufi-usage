@@ -30,12 +30,13 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from pathlib import Path
 from typing import Any
 
 
 APP_NAME = "luci-app-ufi-usage"
-APP_VERSION = "1.0.0-r27"
+APP_VERSION = "1.0.0-r28"
 LEGACY_DATA_DIR = Path("/etc/ufi-bill")
 DATA_DIR = Path(os.environ.get("UFI_USAGE_DATA_DIR", "/etc/ufi-usage"))
 STATE_FILE = DATA_DIR / "state.json"
@@ -89,6 +90,8 @@ UNICOM_BASE = "https://m.client.10010.com"
 UNICOM_LOGIN_BASE = "https://loginxhm.10010.com"
 UNICOM_SMS_SEND_PATH = "/mobileService/sendRadomNum.htm"
 UNICOM_SMS_LOGIN_PATH = "/mobileService/radomLogin.htm"
+UNICOM_WEB_KEY_URL = UNICOM_BASE + "/login-web/v1/safeInfo/getKey"
+UNICOM_WEB_SMS_URL = UNICOM_BASE + "/login-web/v1/sms/createSms"
 UNICOM_LOGIN_URL = UNICOM_BASE + "/mobileService/login.htm"
 UNICOM_ONLINE_URL = UNICOM_BASE + "/mobileService/onLine.htm"
 UNICOM_PACKAGE_URL = (
@@ -141,6 +144,10 @@ UNICOM_SMS_UA = (
     "(KHTML, like Gecko) Version/4.0 Chrome/103.0.5060.129 "
     "Mobile Safari/537.36; unicom{version:android@13.0000,desmobile:};"
     "devicetype{deviceBrand:samsung,deviceModel:SM-G9910};{yw_code:}"
+)
+UNICOM_WEB_LOGIN_UA = (
+    "ChinaUnicom4.x/13.1 CFNetwork/1410 iOS/17.0 "
+    "unicom{version:iphone_c@13.1000}"
 )
 UNICOM_PUBLIC_KEY = (
     "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDc+CZK9bBA9IU+gZUOc6FUGu7yO9Wp"
@@ -208,6 +215,19 @@ UNICOM_FORM_EMPTY = {
     "ticketChannel": "",
     "version": "WT",
     "userNumber": "",
+    "language": "chinese",
+}
+UNICOM_WEB_QUERY_FORM = {
+    "duanlianjieabc": "",
+    "channelCode": "",
+    "serviceType": "",
+    "saleChannel": "",
+    "externalSources": "",
+    "contactCode": "",
+    "ticket": "",
+    "ticketPhone": "",
+    "ticketChannel": "",
+    "mobile1": "",
     "language": "chinese",
 }
 
@@ -858,6 +878,30 @@ def unicom_mini_rsa(value: str) -> str:
     return unicom_rsa_with_key(value, UNICOM_MINI_PUBLIC_KEY, salt=False)
 
 
+def unicom_web_rsa(value: str) -> str:
+    return unicom_rsa_with_key(value, UNICOM_PUBLIC_KEY, salt=False)
+
+
+def unicom_web_device_id() -> str:
+    alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
+    return "".join(secrets.choice(alphabet) for _ in range(16))
+
+
+def unicom_web_base_params(device_id: str) -> dict[str, str]:
+    return {
+        "version": "iphone_c@13.1000",
+        "currentVersion": "iphone_c@13.1000",
+        "deviceId": device_id,
+        "deviceCode": device_id,
+        "deviceModel": "iPhone14,3",
+        "deviceOS": "ios16.0",
+        "netWay": "Wifi",
+        "deviceBrand": "iPhone",
+        "pip": "127.0.0.1",
+        "reqtime": str(int(time.time() * 1000)),
+    }
+
+
 def unicom_app_id() -> str:
     value = UNICOM_APPID_TEMPLATE
     while "{d}" in value:
@@ -926,6 +970,258 @@ def unicom_sms_call(
     except ValueError:
         raise UserError("联通短信接口返回格式异常") from None
     return obj(payload)
+
+
+def unicom_web_json_call(
+    opener: urllib.request.OpenerDirector,
+    url: str,
+    payload: dict,
+    *,
+    json_body: bool = False,
+    headers: dict[str, str] | None = None,
+) -> dict:
+    request_headers = {
+        "User-Agent": UNICOM_WEB_LOGIN_UA,
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Encoding": "identity",
+        "Content-Type": "application/json" if json_body else "application/x-www-form-urlencoded",
+    }
+    request_headers.update(headers or {})
+    data = (
+        json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        if json_body
+        else form_data(payload)
+    )
+    status, raw, _ = http_call(
+        opener,
+        url,
+        data=data,
+        headers=request_headers,
+        method="POST",
+        timeout=30,
+    )
+    text = raw.decode("utf-8", errors="replace").strip()
+    if text in {"999998", "999999"}:
+        raise AuthRequired("联通会话已失效，请重新获取验证码")
+    if status < 200 or status >= 300:
+        raise UserError(f"联通登录接口失败（HTTP {status}）")
+    try:
+        result = json.loads(text)
+    except ValueError:
+        raise UserError("联通登录接口返回格式异常") from None
+    if not isinstance(result, dict):
+        raise UserError("联通登录接口返回结构异常")
+    return result
+
+
+def unicom_web_prepare_login(phone: str) -> dict[str, Any]:
+    device_id = unicom_web_device_id()
+    jar = http.cookiejar.CookieJar()
+    opener = opener_with(jar)
+    params = unicom_web_base_params(device_id)
+    params.update(
+        {
+            "resultToken": "",
+            "loginCodeLen": "6",
+            "mobile": unicom_web_rsa(phone),
+            "requestLoginCurrentAccount": phone,
+            "msg_type": "",
+            "ios_open": "1",
+        }
+    )
+    risk_reply = unicom_web_json_call(
+        opener,
+        UNICOM_BASE + UNICOM_SMS_SEND_PATH,
+        params,
+    )
+    mobile_hex = clean_text(
+        risk_reply.get("mobile") or risk_reply.get("desmobile"), 4096
+    )
+    if not mobile_hex:
+        message = clean_text(
+            risk_reply.get("dsc")
+            or risk_reply.get("desc")
+            or risk_reply.get("message")
+            or risk_reply.get("msg"),
+            100,
+        )
+        raise UserError(f"联通风控准备失败：{message or '没有返回验证票据'}")
+
+    key_reply = unicom_web_json_call(
+        opener,
+        UNICOM_WEB_KEY_URL,
+        {"scene": "login"},
+        json_body=True,
+    )
+    public_key = clean_text(obj(key_reply.get("data")).get("value"), 4096)
+    if not public_key:
+        message = clean_text(
+            key_reply.get("desc") or key_reply.get("message") or key_reply.get("code"),
+            100,
+        )
+        raise UserError(f"联通安全验证初始化失败：{message or '密钥为空'}")
+    alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
+    aes_key = "".join(secrets.choice(alphabet) for _ in range(16))
+    encrypt_key = unicom_rsa_with_key(aes_key, public_key, salt=False)
+    return {
+        "device_id": device_id,
+        "mobile_hex": mobile_hex,
+        "aes_key": aes_key,
+        "encrypt_key": encrypt_key,
+        "jar": jar,
+    }
+
+
+def unicom_web_send_code(
+    opener: urllib.request.OpenerDirector,
+    session: dict,
+    result_token: str,
+) -> tuple[bool, str]:
+    phone = digits(session.get("phone"))
+    device_id = clean_text(session.get("device_id"), 64)
+    mobile_hex = clean_text(session.get("mobile_hex"), 4096)
+    encrypt_key = clean_text(session.get("encrypt_key"), 4096)
+    if not phone or not device_id or not mobile_hex or not encrypt_key:
+        raise UserError("联通短信登录状态不完整，请重新开始")
+
+    primary_message = ""
+    try:
+        reply = unicom_web_json_call(
+            opener,
+            UNICOM_WEB_SMS_URL,
+            {
+                "seq": str(uuid.uuid4()),
+                "mobile": mobile_hex,
+                "resultToken": result_token,
+            },
+            json_body=True,
+            headers={"encrypt-key": encrypt_key, "scene-key": "login"},
+        )
+        code = clean_text(reply.get("code"), 30)
+        message = clean_text(
+            reply.get("desc") or reply.get("message") or reply.get("msg"), 100
+        )
+        if code in {"0", "0000"}:
+            return True, "短信验证码已发送"
+        if any(word in message for word in ("频繁", "拦截", "已发送")):
+            return True, "短信验证码已发送至手机"
+        primary_message = message or f"code={code or '?'}"
+    except UserError as error:
+        primary_message = safe_message(error, 100)
+
+    params = unicom_web_base_params(device_id)
+    params.update(
+        {
+            "resultToken": result_token,
+            "loginCodeLen": "6",
+            "mobile": unicom_web_rsa(phone),
+            "requestLoginCurrentAccount": phone,
+            "msg_type": "",
+            "ios_open": "1",
+        }
+    )
+    try:
+        fallback = unicom_web_json_call(
+            opener,
+            UNICOM_BASE + UNICOM_SMS_SEND_PATH,
+            params,
+        )
+        code = clean_text(fallback.get("code") or fallback.get("rsp_code"), 30)
+        if code in {"0", "0000", "00", "success"}:
+            return True, "短信验证码已发送"
+        message = clean_text(
+            fallback.get("dsc")
+            or fallback.get("desc")
+            or fallback.get("message")
+            or fallback.get("msg"),
+            100,
+        )
+        fallback_message = message or f"code={code or '?'}"
+    except UserError as error:
+        fallback_message = safe_message(error, 100)
+
+    if result_token:
+        return True, "安全验证已通过，请留意短信；若未收到可重新发送"
+    raise UserError(
+        f"短信发送失败（{fallback_message or primary_message or '未返回原因'}）"
+    )
+
+
+def unicom_web_keepalive(
+    opener: urllib.request.OpenerDirector,
+    session: dict,
+) -> None:
+    token_online = clean_text(session.get("token_online"), 8192)
+    device_id = clean_text(session.get("device_id"), 64)
+    desmobile = digits(session.get("desmobile") or session.get("phone"))
+    if not token_online or not device_id or not desmobile:
+        raise AuthRequired("联通验证码会话已失效，请重新登录")
+    params = unicom_web_base_params(device_id)
+    params.update(
+        {
+            "token_online": token_online,
+            "encmobile": desmobile,
+        }
+    )
+    reply = unicom_web_json_call(opener, UNICOM_ONLINE_URL, params)
+    code = clean_text(reply.get("code"), 30)
+    renewed = clean_text(reply.get("token_online"), 8192)
+    if code not in {"0", "0000"} or not renewed:
+        message = clean_text(
+            reply.get("dsc") or reply.get("desc") or reply.get("message"), 100
+        )
+        raise AuthRequired(
+            f"联通验证码会话续期失败：{message or '请重新登录'}"
+        )
+    session["token_online"] = renewed
+    session["desmobile"] = desmobile
+    session["last_keepalive"] = now_ts()
+
+
+def unicom_web_fetch_usage(
+    opener: urllib.request.OpenerDirector,
+    jar: http.cookiejar.CookieJar,
+    phone: str,
+) -> dict:
+    warnings: list[str] = []
+    headers = {
+        "Origin": "https://imgxx.client.10010.com",
+        "Referer": "https://imgxx.client.10010.com/",
+    }
+    package_payload: dict = {}
+    balance_payload: dict = {}
+    try:
+        package_payload = unicom_web_json_call(
+            opener,
+            UNICOM_MXX_PACKAGE_URL,
+            dict(UNICOM_WEB_QUERY_FORM),
+            headers=headers,
+        )
+        code = clean_text(package_payload.get("code"), 20)
+        if code and code not in {"0", "0000"}:
+            raise AuthRequired(f"联通余量接口返回 {code}")
+    except UserError as error:
+        warnings.append(safe_message(error, 100))
+    try:
+        balance_payload = unicom_web_json_call(
+            opener,
+            UNICOM_BALANCE_URL,
+            {},
+            headers={
+                "Referer": "https://img.client.10010.com/",
+            },
+        )
+    except UserError as error:
+        warnings.append(safe_message(error, 100))
+    if not package_payload and not balance_payload:
+        raise AuthRequired("联通验证码登录成功，但余量接口暂时不可用")
+    profile = unicom_fetch_profile(opener)
+    if profile:
+        package_payload["__profile"] = profile
+    usage = parse_unicom_usage(package_payload, balance_payload, phone)
+    usage["access_method"] = "mini_sms"
+    usage["warnings"] = warnings + arr(usage.get("warnings"))
+    return usage
 
 
 def unicom_sms_challenge(payload: dict) -> str | None:
@@ -2048,6 +2344,14 @@ def refresh_account_into_state(identifier: str, force_login: bool = False) -> di
         usage, phone = unicom_mini_fetch(openid)
         if phone:
             account["identity_enc"] = encrypt_secret(phone)
+    elif provider == "unicom" and account.get("access_method") == "mini_sms":
+        session = load_session(account)
+        jar = restore_cookies(session.get("cookies"))
+        opener = opener_with(jar)
+        unicom_web_keepalive(opener, session)
+        usage = unicom_web_fetch_usage(opener, jar, identity)
+        session["cookies"] = save_cookies(jar)
+        store_session(account, session)
     elif provider == "mobile":
         session = load_session(account)
         jar = restore_cookies(session.get("cookies"))
@@ -2370,12 +2674,199 @@ def unicom_mini_login(openid: str, label: str) -> dict:
     }
 
 
+def unicom_mini_sms_start(phone: str, label: str) -> dict:
+    normalized = digits(phone)
+    if not re.fullmatch(r"1[3-9]\d{9}", normalized):
+        raise UserError("请输入正确的 11 位联通手机号")
+    state = load_state()
+    identifier = account_id("unicom", normalized)
+    rates = [
+        int(item)
+        for item in arr(obj(state.get("rate")).get(identifier))
+        if int(item) >= now_ts() - 86400
+    ]
+    if rates and now_ts() - rates[-1] < 60:
+        raise UserError(
+            f"联通验证码发送过于频繁，请 {60 - (now_ts() - rates[-1])} 秒后再试"
+        )
+    if len(rates) >= 5:
+        raise UserError("这个联通号码今天已发送 5 次验证码，请明天再试")
+
+    prepared = unicom_web_prepare_login(normalized)
+    identifier, account = create_or_update_account(
+        state, "unicom", normalized, label
+    )
+    account["access_method"] = "mini_sms"
+    flow_id = secrets.token_hex(16)
+    store_session(
+        account,
+        {
+            "mode": "unicom_mini_sms_challenge",
+            "flow_id": flow_id,
+            "phone": normalized,
+            "device_id": prepared["device_id"],
+            "mobile_hex": prepared["mobile_hex"],
+            "aes_key": prepared["aes_key"],
+            "encrypt_key": prepared["encrypt_key"],
+            "started_at": now_ts(),
+            "cookies": save_cookies(prepared["jar"]),
+        },
+    )
+    state["accounts"][identifier] = account
+    state["active_account"] = identifier
+    save_state(state)
+    return {
+        "account": public_account(account),
+        "flow_id": flow_id,
+        "mobile_hex": prepared["mobile_hex"],
+        "expires_in": 300,
+        "message": "请完成联通官方滑块安全验证",
+    }
+
+
+def unicom_mini_sms_send(
+    identifier: str,
+    flow_id: str,
+    result_token: str,
+) -> dict:
+    flow_id = clean_text(flow_id, 64)
+    result_token = clean_text(result_token, 4096)
+    if not flow_id or not re.fullmatch(r"[\x21-\x7e]{1,4096}", result_token):
+        raise UserError("联通安全验证结果无效，请重新验证")
+    state = load_state()
+    _, account = get_account(state, identifier)
+    session = load_session(account)
+    if (
+        session.get("mode") != "unicom_mini_sms_challenge"
+        or session.get("flow_id") != flow_id
+        or now_ts() - int(session.get("started_at") or 0) > 300
+    ):
+        raise UserError("联通安全验证已过期，请重新发送验证码")
+    jar = restore_cookies(session.get("cookies"))
+    opener = opener_with(jar)
+    ok, message = unicom_web_send_code(opener, session, result_token)
+    if not ok:
+        raise UserError(message or "联通短信验证码发送失败")
+    session["mode"] = "unicom_mini_sms_pending"
+    session["sent_at"] = now_ts()
+    session["cookies"] = save_cookies(jar)
+    session.pop("mobile_hex", None)
+    session.pop("aes_key", None)
+    session.pop("encrypt_key", None)
+    session.pop("flow_id", None)
+    store_session(account, session)
+    rates = [
+        int(item)
+        for item in arr(obj(state.get("rate")).get(identifier))
+        if int(item) >= now_ts() - 86400
+    ]
+    state["rate"][identifier] = rates + [now_ts()]
+    state["accounts"][identifier] = account
+    state["active_account"] = identifier
+    save_state(state)
+    return {
+        "account": public_account(account),
+        "expires_in": 300,
+        "message": message,
+    }
+
+
+def unicom_mini_sms_verify(identifier: str, code: str) -> dict:
+    code = digits(code)
+    if not re.fullmatch(r"\d{4,8}", code):
+        raise UserError("请输入联通短信验证码")
+    state = load_state()
+    _, account = get_account(state, identifier)
+    if account.get("provider") != "unicom":
+        raise UserError("该账号不是联通账号")
+    session = load_session(account)
+    if session.get("mode") != "unicom_mini_sms_pending":
+        raise UserError("没有待验证的联通短信登录")
+    if now_ts() - int(session.get("sent_at") or 0) > 300:
+        raise UserError("联通验证码已过期，请重新发送")
+    phone = digits(session.get("phone") or account_identity(account))
+    device_id = clean_text(session.get("device_id"), 64)
+    if not re.fullmatch(r"1[3-9]\d{9}", phone) or not device_id:
+        raise UserError("联通短信登录状态异常，请重新发送验证码")
+    params = unicom_web_base_params(device_id)
+    params.update(
+        {
+            "yw_code": "",
+            "loginStyle": "0",
+            "mobile": unicom_web_rsa(phone),
+            "isRemberPwd": "true",
+            "password": unicom_web_rsa(code),
+            "keyVersion": "",
+            "provinceChanel": "general",
+            "voice_code": "",
+            "appId": UNICOM_SMS_APP_ID,
+            "voiceoff_flag": "1",
+            "timestamp": dt.datetime.now().strftime("%Y%m%d%H%M%S"),
+            "requestLoginCurrentAccount": phone,
+            "loginCodeLen": "6",
+        }
+    )
+    jar = restore_cookies(session.get("cookies"))
+    opener = opener_with(jar)
+    reply = unicom_web_json_call(
+        opener,
+        UNICOM_BASE + UNICOM_SMS_LOGIN_PATH,
+        params,
+    )
+    result_code = clean_text(reply.get("code"), 30)
+    token_online = clean_text(
+        reply.get("token_online") or reply.get("onlin_token"), 8192
+    )
+    if result_code not in {"0", "0000"} or not token_online:
+        message = clean_text(
+            reply.get("dsc")
+            or reply.get("desc")
+            or reply.get("message")
+            or reply.get("msg"),
+            100,
+        )
+        raise UserError(
+            f"联通短信登录失败（{result_code or '?'}：{message or '验证码错误或已过期'}）"
+        )
+    final_session = {
+        "mode": "unicom_mini_sms",
+        "phone": phone,
+        "device_id": device_id,
+        "token_online": token_online,
+        "desmobile": phone,
+        "last_keepalive": now_ts(),
+        "cookies": save_cookies(jar),
+    }
+    account["access_method"] = "mini_sms"
+    account["identity_enc"] = encrypt_secret(phone)
+    store_session(account, final_session)
+    state["accounts"][identifier] = account
+    state["active_account"] = identifier
+    save_state(state)
+
+    with contextlib.suppress(AuthRequired):
+        unicom_web_keepalive(opener, final_session)
+    usage = unicom_web_fetch_usage(opener, jar, phone)
+    final_session["cookies"] = save_cookies(jar)
+    store_session(account, final_session)
+    store_usage(account, usage)
+    state = load_state()
+    state["accounts"][identifier] = account
+    state["active_account"] = identifier
+    save_state(state)
+    return {
+        "usage": usage,
+        "account": public_account(account),
+        "message": "联通小程序验证码登录成功",
+    }
+
+
 def unicom_export_token(identifier: str) -> dict:
     state = load_state()
     _, account = get_account(state, identifier)
     if account.get("provider") != "unicom":
         raise UserError("只有联通账号支持导出 ecs_token")
-    if account.get("access_method") == "mini":
+    if account.get("access_method") in {"mini", "mini_sms"}:
         raise UserError("小程序账号不使用 ecs_token，无需导出")
     session = load_session(account)
     token = clean_text(session.get("ecs_token"), 8192)
@@ -3242,11 +3733,43 @@ def auto_login_once(identifier: str, manual: bool = False) -> dict:
             os.close(fd)
 
 
+def maintain_unicom_mini_sms_sessions(state: dict) -> None:
+    changed = False
+    for account in state.get("accounts", {}).values():
+        account = obj(account)
+        if (
+            account.get("provider") != "unicom"
+            or account.get("access_method") != "mini_sms"
+        ):
+            continue
+        session = load_session(account)
+        if session.get("mode") != "unicom_mini_sms":
+            continue
+        if now_ts() - int(session.get("last_keepalive_attempt") or 0) < 120:
+            continue
+        session["last_keepalive_attempt"] = now_ts()
+        jar = restore_cookies(session.get("cookies"))
+        opener = opener_with(jar)
+        try:
+            unicom_web_keepalive(opener, session)
+            session["cookies"] = save_cookies(jar)
+        except UserError as error:
+            account["last_error"] = safe_message(error, 160)
+            log_message(
+                f"mini SMS keepalive failed account={account.get('id', '')[:8]}"
+            )
+        store_session(account, session)
+        changed = True
+    if changed:
+        save_state(state)
+
+
 def auto_daemon() -> None:
     log_message("automatic login daemon started")
     while True:
         try:
             state = load_state()
+            maintain_unicom_mini_sms_sessions(state)
             auto = obj(state.get("auto"))
             if not auto.get("enabled"):
                 time.sleep(30)
@@ -3371,6 +3894,21 @@ def api_dispatch(request: dict) -> dict:
     if action == "unicom_mini_login":
         result = unicom_mini_login(request.get("openid"), request.get("label"))
         return {"ok": True, **result}
+    if action == "unicom_mini_sms_start":
+        result = unicom_mini_sms_start(request.get("phone"), request.get("label"))
+        return {"ok": True, **result}
+    if action == "unicom_mini_sms_send":
+        result = unicom_mini_sms_send(
+            clean_text(request.get("account_id"), 40),
+            clean_text(request.get("flow_id"), 64),
+            request.get("result_token"),
+        )
+        return {"ok": True, **result}
+    if action == "unicom_mini_sms_verify":
+        result = unicom_mini_sms_verify(
+            clean_text(request.get("account_id"), 40), request.get("code")
+        )
+        return {"ok": True, **result}
     if action == "unicom_export_token":
         return unicom_export_token(clean_text(request.get("account_id"), 40))
     if action == "unicom_send_sms":
@@ -3454,8 +3992,8 @@ def api_dispatch(request: dict) -> dict:
         state = load_state()
         _, account = get_account(state, identifier)
         provider = account.get("provider")
-        if account.get("access_method") == "mini":
-            raise UserError("小程序账号的手机号由联通接口自动识别，不能手动修改")
+        if account.get("access_method") in {"mini", "mini_sms"}:
+            raise UserError("小程序账号请删除后重新登录以更换手机号")
         if provider not in {"mobile", "unicom"}:
             raise UserError("只有移动或联通账号支持修改手机号")
         phone = digits(request.get("phone"))
@@ -3724,12 +4262,19 @@ def selftest() -> dict:
         unicom_mini_rsa("test-token" + "oFroJ0ZkvVVZPkAIA0AV5wRU2eOY")
     )
     assert len(mini_ciphertext) == 256
+    web_login_ciphertext = base64.b64decode(unicom_web_rsa("13100131000"))
+    assert len(web_login_ciphertext) == 128
+    web_device_id = unicom_web_device_id()
+    assert re.fullmatch(r"[a-z0-9]{16}", web_device_id)
+    web_params = unicom_web_base_params(web_device_id)
+    assert web_params["deviceId"] == web_device_id
+    assert web_params["version"] == "iphone_c@13.1000"
     assert "138****8000" in safe_message("账号 13800138000 已登录")
     return {
         "ok": True,
         "version": APP_VERSION,
         "parsers": ["mobile", "unicom", "cloud", "xj"],
-        "crypto": ["mobile-aes", "unicom-rsa"],
+        "crypto": ["mobile-aes", "unicom-rsa", "unicom-web-rsa"],
         "storage_encryption": True,
     }
 

@@ -13,8 +13,9 @@ include source files from that project.
 
 ## weda0511 / ha_unicom_bill
 
-China Unicom `myPackage` endpoint behavior and field names were cross-checked
-against:
+China Unicom `myPackage` endpoint behavior, field names, and the official
+slider / `login-web` SMS / `radomLogin` / `onLine` authentication sequence were
+cross-checked against:
 
 <https://github.com/weda0511/ha_unicom_bill>
 
